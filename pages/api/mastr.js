@@ -6,6 +6,7 @@ const BASE =
 const FILTER_META =
   "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetFilterColumnsErweiterteOeffentlicheEinheitStromerzeugung";
 
+// Spaltenauswahl (Key = Quellspalte, title = Zielspaltenname)
 const COLUMNS = [
   { key: "MaStR-Nummer der Einheit", title: "MaStRNummer" },
   { key: "Anlagenbetreiber (Name)",  title: "Betreiber" },
@@ -18,6 +19,7 @@ const COLUMNS = [
   { key: "Inbetriebnahmedatum der Einheit", title: "Inbetriebnahme" }
 ];
 
+// ---- Helpers ----
 function toCSV(rows) {
   const header = COLUMNS.map(c => c.title).join(",");
   const esc = (v) => {
@@ -30,12 +32,13 @@ function toCSV(rows) {
   return [header, ...lines].join("\n");
 }
 
-function toDDMMYYYY(iso) {
+function toTicks(iso) {
   // erwartet 'YYYY-MM-DD'
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
-  if (!m) return iso;
+  if (!m) return null;
   const [, y, mo, d] = m;
-  return `${d}.${mo}.${y}`;
+  const ms = Date.UTC(Number(y), Number(mo) - 1, Number(d), 0, 0, 0, 0);
+  return `/Date(${ms})/`;
 }
 
 async function fetchJSON(url) {
@@ -70,10 +73,13 @@ export default async function handler(req) {
       );
     }
 
-    const start = toDDMMYYYY(startISO); // -> 'DD.MM.YYYY'
-    const end   = toDDMMYYYY(endISO);
+    const startTicks = toTicks(startISO);
+    const endTicks   = toTicks(endISO);
+    if (!startTicks || !endTicks) {
+      return new Response("Invalid date format. Use YYYY-MM-DD.", { status: 400 });
+    }
 
-    // 1) Energieträger-Code ermitteln (Name -> Value)
+    // 1) Energieträger-Code ermitteln (Name -> Value). Default: 'Solare Strahlungsenergie'
     const meta = await fetchJSON(FILTER_META);
     const carrierFilter = Array.isArray(meta)
       ? meta.find(f => (f.FilterName || "").toLowerCase() === "energieträger")
@@ -94,24 +100,14 @@ export default async function handler(req) {
         if (chosen) carrierCode = String(chosen.Value);
       }
     }
+    // Fallback: 2495 = Solare Strahlungsenergie (aus Filterliste)
+    if (!carrierCode) carrierCode = "2495";
 
-    if (!carrierCode) {
-      const options = carrierFilter?.ListObject?.map(x => ({ name: x.Name, value: x.Value })) || [];
-      const body = JSON.stringify({
-        error: "Unknown 'carrier'. Use numeric Value or one of the provided names.",
-        tried: carrierQ,
-        examples: options.slice(0, 50)
-      });
-      return new Response(body, {
-        status: 400,
-        headers: { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" }
-      });
-    }
-
-    // 2) Filter mit Quotes und deutschem Datumsformat (siehe MaStR-URL-Beispiel)
+    // 2) Filter auf das richtige Feld + Date-Ticks
+    //    Feld: EegInbetriebnahmeDatum (wie in den Daten gesehen)
     const filterRaw =
-      `Inbetriebnahmedatum der Einheit~ge~'${start}'` +
-      `~and~Inbetriebnahmedatum der Einheit~lt~'${end}'` +
+      `EegInbetriebnahmeDatum~ge~'${startTicks}'` +
+      `~and~EegInbetriebnahmeDatum~lt~'${endTicks}'` +
       `~and~Energieträger~eq~'${carrierCode}'`;
 
     let page = 1;
@@ -142,7 +138,16 @@ export default async function handler(req) {
       for (const rec of data) {
         const out = {};
         for (const col of COLUMNS) {
-          out[col.title] = rec[col.key] ?? "";
+          if (col.key === "Inbetriebnahmedatum der Einheit") {
+            // robustes Mapping: versuche mehrere mögliche Feldnamen
+            out[col.title] =
+              rec["Inbetriebnahmedatum der Einheit"] ??
+              rec["InbetriebnahmeDatum"] ??
+              rec["EegInbetriebnahmeDatum"] ??
+              "";
+          } else {
+            out[col.title] = rec[col.key] ?? "";
+          }
         }
         rows.push(out);
       }
