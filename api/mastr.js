@@ -1,12 +1,11 @@
-// /api/mastr.js
-export const config = { runtime: "edge" };
+// /api/mastr.js  — Node.js Serverless Function (CommonJS), kurz laufend
+// Lädt MaStR-Daten paginiert. Standard: 1 Seite, 500 Zeilen -> schnell für Hobby-Timeouts.
 
 const BASE =
   "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetErweiterteOeffentlicheEinheitStromerzeugung";
 const FILTER_META =
   "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetFilterColumnsErweiterteOeffentlicheEinheitStromerzeugung";
 
-// Spaltenauswahl (Key = Quellspalte, title = Zielspaltenname)
 const COLUMNS = [
   { key: "MaStR-Nummer der Einheit", title: "MaStRNummer" },
   { key: "Anlagenbetreiber (Name)",  title: "Betreiber" },
@@ -19,7 +18,6 @@ const COLUMNS = [
   { key: "Inbetriebnahmedatum der Einheit", title: "Inbetriebnahme" }
 ];
 
-// ---- Helpers ----
 function toCSV(rows) {
   const header = COLUMNS.map(c => c.title).join(",");
   const esc = (v) => {
@@ -33,7 +31,6 @@ function toCSV(rows) {
 }
 
 function toTicks(iso) {
-  // erwartet 'YYYY-MM-DD'
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
   if (!m) return null;
   const [, y, mo, d] = m;
@@ -41,14 +38,15 @@ function toTicks(iso) {
   return `/Date(${ms})/`;
 }
 
-async function fetchJSON(url) {
+async function fetchJSON(url, signal) {
   const resp = await fetch(url, {
     headers: {
       "Accept": "application/json",
       "User-Agent": "mastr-proxy-vercel",
       "X-Requested-With": "XMLHttpRequest",
       "Referer": "https://www.marktstammdatenregister.de/"
-    }
+    },
+    signal
   });
   if (!resp.ok) {
     const body = await resp.text().catch(() => "");
@@ -57,30 +55,40 @@ async function fetchJSON(url) {
   return resp.json();
 }
 
-export default async function handler(req) {
+module.exports = async (req, res) => {
+  // --- CORS & caching ---
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Cache-Control", "no-store");
+
   try {
-    const url = new URL(req.url);
+    const url = new URL(req.url, `https://${req.headers.host}`);
     const startISO = url.searchParams.get("start");
     const endISO   = url.searchParams.get("end");
     const carrierQ = (url.searchParams.get("carrier") || "Solare Strahlungsenergie").trim();
-    const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "2000", 10), 5000);
     const format   = (url.searchParams.get("format") || "csv").toLowerCase();
 
+    // Runtime-Schrauben gegen Timeout
+    const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "500", 10), 2000); // klein halten
+    const maxPages = Math.min(parseInt(url.searchParams.get("maxpages") || "1", 10), 20);     // erst 1 Seite
+
     if (!startISO || !endISO) {
-      return new Response(
-        "Missing 'start' or 'end' (YYYY-MM-DD). Example: ?start=2024-01-01&end=2024-01-31&format=csv",
-        { status: 400 }
-      );
+      res.status(400).send("Missing 'start' or 'end' (YYYY-MM-DD). Example: ?start=2024-01-01&end=2024-01-31&format=csv");
+      return;
     }
 
     const startTicks = toTicks(startISO);
     const endTicks   = toTicks(endISO);
     if (!startTicks || !endTicks) {
-      return new Response("Invalid date format. Use YYYY-MM-DD.", { status: 400 });
+      res.status(400).send("Invalid date format. Use YYYY-MM-DD.");
+      return;
     }
 
-    // 1) Energieträger-Code ermitteln (Name -> Value). Default: 'Solare Strahlungsenergie'
-    const meta = await fetchJSON(FILTER_META);
+    // pro-Request Timeout (8s) – verhindert Hängenbleiben
+    const ac = new AbortController();
+    const to = setTimeout(() => ac.abort("timeout"), 8000);
+
+    // 1) Energieträger-Code ermitteln
+    const meta = await fetchJSON(FILTER_META, ac.signal);
     const carrierFilter = Array.isArray(meta)
       ? meta.find(f => (f.FilterName || "").toLowerCase() === "energieträger")
       : null;
@@ -100,11 +108,9 @@ export default async function handler(req) {
         if (chosen) carrierCode = String(chosen.Value);
       }
     }
-    // Fallback: 2495 = Solare Strahlungsenergie (aus Filterliste)
-    if (!carrierCode) carrierCode = "2495";
+    if (!carrierCode) carrierCode = "2495"; // Fallback: Solare Strahlungsenergie
 
-    // 2) Filter auf das richtige Feld + Date-Ticks
-    //    Feld: EegInbetriebnahmeDatum (wie in den Daten gesehen)
+    // 2) Filter: EegInbetriebnahmeDatum + Energieträger
     const filterRaw =
       `EegInbetriebnahmeDatum~ge~'${startTicks}'` +
       `~and~EegInbetriebnahmeDatum~lt~'${endTicks}'` +
@@ -112,7 +118,6 @@ export default async function handler(req) {
 
     let page = 1;
     const rows = [];
-    const maxPages = 200;
 
     while (page <= maxPages) {
       const skip = (page - 1) * pageSize;
@@ -124,12 +129,12 @@ export default async function handler(req) {
         `&skip=${skip}&take=${take}` +
         `&filter=${encodeURIComponent(filterRaw)}`;
 
-      const j = await fetchJSON(q);
+      const j = await fetchJSON(q, ac.signal);
 
       if (j && j.Error) {
-        const msg = j.Message || "no message";
-        const typ = j.Type || "?";
-        return new Response(`Upstream reported Error (Type=${typ}): ${msg}`, { status: 502 });
+        clearTimeout(to);
+        res.status(502).send(`Upstream reported Error (Type=${j.Type || "?"}): ${j.Message || "no message"}`);
+        return;
       }
 
       const data = Array.isArray(j) ? j : (j.Data || j.data || []);
@@ -139,7 +144,6 @@ export default async function handler(req) {
         const out = {};
         for (const col of COLUMNS) {
           if (col.key === "Inbetriebnahmedatum der Einheit") {
-            // robustes Mapping: versuche mehrere mögliche Feldnamen
             out[col.title] =
               rec["Inbetriebnahmedatum der Einheit"] ??
               rec["InbetriebnahmeDatum"] ??
@@ -155,28 +159,18 @@ export default async function handler(req) {
       page++;
     }
 
-    const commonHeaders = {
-      "Cache-Control": "no-store",
-      "Access-Control-Allow-Origin": "*"
-    };
+    clearTimeout(to);
 
     if (format === "json") {
-      return new Response(JSON.stringify(rows), {
-        status: 200,
-        headers: { ...commonHeaders, "Content-Type": "application/json; charset=utf-8" }
-      });
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.status(200).send(JSON.stringify(rows));
     } else {
       const csv = toCSV(rows);
-      return new Response(csv, {
-        status: 200,
-        headers: { ...commonHeaders, "Content-Type": "text/csv; charset=utf-8" }
-      });
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.status(200).send(csv);
     }
   } catch (err) {
     const msg = (err && err.message) ? err.message : String(err);
-    return new Response(`Proxy error: ${msg}`, {
-      status: 502,
-      headers: { "Access-Control-Allow-Origin": "*" }
-    });
+    res.status(502).send(`Proxy error: ${msg}`);
   }
-}
+};
