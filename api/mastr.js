@@ -1,3 +1,5 @@
+// redeploy trigger
+
 export const config = { runtime: "edge" };
 
 const BASE = "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetErweiterteOeffentlicheEinheitStromerzeugung";
