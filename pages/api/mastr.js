@@ -1,6 +1,7 @@
 export const config = { runtime: "edge" };
 
-const BASE = "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetErweiterteOeffentlicheEinheitStromerzeugung";
+const BASE =
+  "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetErweiterteOeffentlicheEinheitStromerzeugung";
 
 // Spalten, die wir ausgeben wollen (Key = Quellspalte, title = Zielspaltenname)
 const COLUMNS = [
@@ -29,38 +30,67 @@ function toCSV(rows) {
 
 export default async function handler(req) {
   const url = new URL(req.url);
-  const start = url.searchParams.get("start");
-  const end   = url.searchParams.get("end");
-  const carrier  = url.searchParams.get("carrier")  || "Solare Strahlungsenergie";
-  const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "2000", 10), 5000);
-  const format   = (url.searchParams.get("format") || "csv").toLowerCase();
+  const start     = url.searchParams.get("start");
+  const end       = url.searchParams.get("end");
+  const carrier   = url.searchParams.get("carrier") || "Solare Strahlungsenergie";
+  const pageSize  = Math.min(parseInt(url.searchParams.get("pagesize") || "2000", 10), 5000);
+  const format    = (url.searchParams.get("format") || "csv").toLowerCase();
 
   if (!start || !end) {
-    return new Response("Missing 'start' or 'end' (YYYY-MM-DD). Example: ?start=2025-10-01&end=2025-11-01&format=csv", { status: 400 });
+    return new Response(
+      "Missing 'start' or 'end' (YYYY-MM-DD). Example: ?start=2024-01-01&end=2024-01-31&format=csv",
+      { status: 400 }
+    );
   }
 
+  // Kendo-Filter (zwischen start inkl. und end exklusiv)
   const filterRaw =
     `Inbetriebnahmedatum der Einheit~ge~${start}` +
     `~and~Inbetriebnahmedatum der Einheit~lt~${end}` +
     `~and~Energieträger~eq~"${carrier}"`;
-  const filter = encodeURIComponent(filterRaw);
 
   let page = 1;
   const rows = [];
   const maxPages = 200;
 
   while (page <= maxPages) {
-    const q = `${BASE}?filter=${filter}&page=${page}&pageSize=${pageSize}`;
+    const skip = (page - 1) * pageSize;
+    const take = pageSize;
+
+    // Kendo-Parameter mitgeben; Filter URL-encoden
+    const q =
+      `${BASE}?group=&sort=&aggregate=` +
+      `&page=${page}&pageSize=${pageSize}` +
+      `&skip=${skip}&take=${take}` +
+      `&filter=${encodeURIComponent(filterRaw)}`;
+
     const resp = await fetch(q, {
       headers: {
         "Accept": "application/json",
-        "User-Agent": "mastr-proxy-vercel"
+        "User-Agent": "mastr-proxy-vercel",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": "https://www.marktstammdatenregister.de/"
       }
     });
+
     if (!resp.ok) {
       return new Response(`Upstream error ${resp.status}: ${await resp.text()}`, { status: 502 });
     }
-    const j = await resp.json();
+
+    let j;
+    try {
+      j = await resp.json();
+    } catch (e) {
+      return new Response(`Upstream returned non-JSON`, { status: 502 });
+    }
+
+    // Upstream-Fehler nicht verschlucken
+    if (j && j.Error) {
+      const msg = j.Message || "no message";
+      const typ = j.Type || "?";
+      return new Response(`Upstream reported Error (Type=${typ}): ${msg}`, { status: 502 });
+    }
+
     const data = Array.isArray(j) ? j : (j.Data || j.data || []);
     if (!Array.isArray(data) || data.length === 0) break;
 
@@ -71,6 +101,7 @@ export default async function handler(req) {
       }
       rows.push(out);
     }
+
     page++;
   }
 
@@ -80,9 +111,15 @@ export default async function handler(req) {
   };
 
   if (format === "json") {
-    return new Response(JSON.stringify(rows), { status: 200, headers: { ...commonHeaders, "Content-Type": "application/json; charset=utf-8" } });
+    return new Response(JSON.stringify(rows), {
+      status: 200,
+      headers: { ...commonHeaders, "Content-Type": "application/json; charset=utf-8" }
+    });
   } else {
     const csv = toCSV(rows);
-    return new Response(csv, { status: 200, headers: { ...commonHeaders, "Content-Type": "text/csv; charset=utf-8" } });
+    return new Response(csv, {
+      status: 200,
+      headers: { ...commonHeaders, "Content-Type": "text/csv; charset=utf-8" }
+    });
   }
 }
