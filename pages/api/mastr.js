@@ -1,13 +1,11 @@
 // /api/mastr.js
 export const config = { runtime: "edge" };
 
-// Offiziell dokumentierte (Kendo-)Endpoints laut bund.dev-Repo
 const BASE =
   "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetErweiterteOeffentlicheEinheitStromerzeugung";
 const FILTER_META =
   "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetFilterColumnsErweiterteOeffentlicheEinheitStromerzeugung";
 
-// Spaltenauswahl (Key = Quellspalte, title = Zielspaltenname)
 const COLUMNS = [
   { key: "MaStR-Nummer der Einheit", title: "MaStRNummer" },
   { key: "Anlagenbetreiber (Name)",  title: "Betreiber" },
@@ -32,6 +30,14 @@ function toCSV(rows) {
   return [header, ...lines].join("\n");
 }
 
+function toDDMMYYYY(iso) {
+  // erwartet 'YYYY-MM-DD'
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+  if (!m) return iso;
+  const [, y, mo, d] = m;
+  return `${d}.${mo}.${y}`;
+}
+
 async function fetchJSON(url) {
   const resp = await fetch(url, {
     headers: {
@@ -51,53 +57,50 @@ async function fetchJSON(url) {
 export default async function handler(req) {
   try {
     const url = new URL(req.url);
-    const start    = url.searchParams.get("start");
-    const end      = url.searchParams.get("end");
+    const startISO = url.searchParams.get("start");
+    const endISO   = url.searchParams.get("end");
     const carrierQ = (url.searchParams.get("carrier") || "Solare Strahlungsenergie").trim();
     const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "2000", 10), 5000);
     const format   = (url.searchParams.get("format") || "csv").toLowerCase();
 
-    if (!start || !end) {
+    if (!startISO || !endISO) {
       return new Response(
         "Missing 'start' or 'end' (YYYY-MM-DD). Example: ?start=2024-01-01&end=2024-01-31&format=csv",
         { status: 400 }
       );
     }
 
-    // 1) Lade Meta-Filter und ermittle Code für 'Energieträger'
+    const start = toDDMMYYYY(startISO); // -> 'DD.MM.YYYY'
+    const end   = toDDMMYYYY(endISO);
+
+    // 1) Energieträger-Code ermitteln (Name -> Value)
     const meta = await fetchJSON(FILTER_META);
-    // meta: [{ FilterName, ListObject: [{Name, Value}], Type }, ...]
     const carrierFilter = Array.isArray(meta)
       ? meta.find(f => (f.FilterName || "").toLowerCase() === "energieträger")
       : null;
 
     let carrierCode = null;
-
     if (carrierFilter && Array.isArray(carrierFilter.ListObject)) {
-      // a) numerischer Code übergeben?
       if (/^\d+$/.test(carrierQ)) {
         const hit = carrierFilter.ListObject.find(x => String(x.Value) === carrierQ);
         if (hit) carrierCode = String(hit.Value);
       }
-      // b) sonst: Name matchen (case-insensitiv, inkl. Teiltreffer am Anfang)
       if (!carrierCode) {
         const cq = carrierQ.toLowerCase();
-        // erst exakter Name, dann startsWith, dann includes
-        const exact = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase() === cq);
+        const exact  = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase() === cq);
         const starts = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().startsWith(cq));
-        const incl = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().includes(cq));
+        const incl   = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().includes(cq));
         const chosen = exact || starts || incl || null;
         if (chosen) carrierCode = String(chosen.Value);
       }
     }
 
     if (!carrierCode) {
-      // Carrier nicht gefunden → gebe Liste zurück, damit der Nutzer sieht, was möglich ist
       const options = carrierFilter?.ListObject?.map(x => ({ name: x.Name, value: x.Value })) || [];
       const body = JSON.stringify({
         error: "Unknown 'carrier'. Use numeric Value or one of the provided names.",
         tried: carrierQ,
-        examples: options.slice(0, 50) // nicht zu groß machen
+        examples: options.slice(0, 50)
       });
       return new Response(body, {
         status: 400,
@@ -105,11 +108,11 @@ export default async function handler(req) {
       });
     }
 
-    // 2) Kendo-Filter: Datum [start, end) + Energieträger (NUMERISCH, ohne Anführungszeichen)
+    // 2) Filter mit Quotes und deutschem Datumsformat (siehe MaStR-URL-Beispiel)
     const filterRaw =
-      `Inbetriebnahmedatum der Einheit~ge~${start}` +
-      `~and~Inbetriebnahmedatum der Einheit~lt~${end}` +
-      `~and~Energieträger~eq~${carrierCode}`;
+      `Inbetriebnahmedatum der Einheit~ge~'${start}'` +
+      `~and~Inbetriebnahmedatum der Einheit~lt~'${end}'` +
+      `~and~Energieträger~eq~'${carrierCode}'`;
 
     let page = 1;
     const rows = [];
