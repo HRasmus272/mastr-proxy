@@ -1,0 +1,10 @@
+{
+  "functions": {
+    "api/mastr.ts": {
+      "runtime": "edge"
+    }
+  },
+  "routes": [
+    { "src": "/api/mastr", "dest": "api/mastr.ts" }
+  ]
+}
