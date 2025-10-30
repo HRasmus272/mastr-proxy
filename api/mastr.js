@@ -2,9 +2,9 @@
 // Lädt MaStR-Daten paginiert. Standard: 1 Seite, 500 Zeilen -> schnell für Hobby-Timeouts.
 
 const BASE =
-  https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetErweiterteOeffentlicheEinheitStromerzeugung;
+  "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetErweiterteOeffentlicheEinheitStromerzeugung";
 const FILTER_META =
-  https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetFilterColumnsErweiterteOeffentlicheEinheitStromerzeugung;
+  "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetFilterColumnsErweiterteOeffentlicheEinheitStromerzeugung";
 
 const COLUMNS = [
   { key: "MaStR-Nummer der Einheit", title: "MaStRNummer" },
@@ -44,7 +44,7 @@ async function fetchJSON(url, signal) {
       "Accept": "application/json",
       "User-Agent": "mastr-proxy-vercel",
       "X-Requested-With": "XMLHttpRequest",
-      "Referer": https://www.marktstammdatenregister.de/
+      "Referer": "https://www.marktstammdatenregister.de/"
     },
     signal
   });
