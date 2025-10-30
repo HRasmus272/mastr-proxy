@@ -100,29 +100,15 @@ module.exports = async (req, res) => {
     const ac = new AbortController();
     const to = setTimeout(() => ac.abort("timeout"), 8000);
 
-    // 1) Energieträger-Code ermitteln
-    const meta = await fetchJSON(FILTER_META, ac.signal);
-    const carrierFilter = Array.isArray(meta)
-      ? meta.find(f => (f.FilterName || "").toLowerCase() === "energieträger")
-      : null;
-
-    let carrierCode = null;
-    if (carrierFilter && Array.isArray(carrierFilter.ListObject)) {
-      if (/^\d+$/.test(carrierQ)) {
-        const hit = carrierFilter.ListObject.find(x => String(x.Value) === carrierQ);
-        if (hit) carrierCode = String(hit.Value);
-      }
-      if (!carrierCode) {
-        const cq = carrierQ.toLowerCase();
-        const exact  = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase() === cq);
-        const starts = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().startsWith(cq));
-        const incl   = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().includes(cq));
-        const chosen = exact || starts || incl || null;
-        if (chosen) carrierCode = String(chosen.Value);
-      }
-    }
-    if (!carrierCode) carrierCode = "2495"; // Fallback: Solare Strahlungsenergie
-
+    // 1) Energieträger-Code ermitteln (vereinfachter Fallback, kein Meta-Call)
+let carrierCode = null;
+if (/^\d+$/.test(carrierQ)) {
+  // Wenn der Nutzer eine Zahl liefert (z. B. 2495), direkt verwenden
+  carrierCode = String(carrierQ);
+} else {
+  // Sonst vorerst fixer Fallback für PV
+  carrierCode = "2495"; // Solare Strahlungsenergie
+}
     // 2) Filter zusammenbauen (Datum + Energieträger)
     const filterRaw = `${dateExpr}~and~Energieträger~eq~'${carrierCode}'`;
 
