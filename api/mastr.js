@@ -112,10 +112,10 @@ module.exports = async (req, res) => {
 
     // 2) Filter: InbetriebnahmeDatum + Energieträger
     const dateField = "InbetriebnahmeDatum";
-const filterRaw =
-  `${dateField}~ge~datetime'${startISO}T00:00:00'` +
-  `~and~${dateField}~lt~datetime'${endISO}T00:00:00'` +
-  `~and~Energieträger~eq~'${carrierCode}'`;
+    const filterRaw =
+      `${dateField}~ge~'${startTicks}'` +
+      `~and~${dateField}~lt~'${endTicks}'` +
+      `~and~Energieträger~eq~'${carrierCode}'`;
 
     let page = 1;
     const rows = [];
