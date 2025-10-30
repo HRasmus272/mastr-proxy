@@ -110,11 +110,18 @@ module.exports = async (req, res) => {
     }
     if (!carrierCode) carrierCode = "2495"; // Fallback: Solare Strahlungsenergie
 
-  // 2) Filter: InbetriebnahmeDatum + Energieträger  (ohne Quotes um /Date(...)/ )
+// 2) Filter: InbetriebnahmeDatum + Energieträger (dd.MM.yyyy)
 const dateField = "InbetriebnahmeDatum";
+const toDE = (iso) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : iso; // "2024-01-31" -> "31.01.2024"
+};
+const s = toDE(startISO);
+const e = toDE(endISO);
+
 const filterRaw =
-  `${dateField}~ge~${startTicks}` +
-  `~and~${dateField}~lt~${endTicks}` +
+  `${dateField}~ge~'${s}'` +
+  `~and~${dateField}~lt~'${e}'` +
   `~and~Energieträger~eq~'${carrierCode}'`;
 
     let page = 1;
