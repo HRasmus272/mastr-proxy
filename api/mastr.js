@@ -15,7 +15,7 @@ const COLUMNS = [
   { key: "Bundesland",               title: "Bundesland" },
   { key: "Plz",                      title: "PLZ" },
   { key: "Ort",                      title: "Ort" },
-  { key: "Inbetriebnahmedatum der Einheit", title: "Inbetriebnahme" }
+  { key: "InbetriebnahmeDatum", title: "InbetriebnahmeDatum" }
 ];
 
 function toCSV(rows) {
