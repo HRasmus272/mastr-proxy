@@ -38,6 +38,14 @@ function toTicks(iso) {
   return `/Date(${ms})/`;
 }
 
+function toDateExpr(iso) {
+  // erwartet "YYYY-MM-DD" und baut datetime'YYYY-MM-DDT00:00:00'
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+  if (!m) return null;
+  const [, y, mo, d] = m;
+  return `datetime'${y}-${mo}-${d}T00:00:00'`;
+}
+
 async function fetchJSON(url, signal) {
   const resp = await fetch(url, {
     headers: {
@@ -76,9 +84,9 @@ module.exports = async (req, res) => {
       return;
     }
 
-    const startTicks = toTicks(startISO);
-    const endTicks   = toTicks(endISO);
-    if (!startTicks || !endTicks) {
+    const startExpr = toDateExpr(startISO);
+const endExpr   = toDateExpr(endISO);
+if (!startExpr || !endExpr) {
       res.status(400).send("Invalid date format. Use YYYY-MM-DD.");
       return;
     }
@@ -113,9 +121,9 @@ module.exports = async (req, res) => {
     // 2) Filter: InbetriebnahmeDatum + Energieträger
     const dateField = "InbetriebnahmeDatum";
     const filterRaw =
-      `${dateField}~ge~'${startTicks}'` +
-      `~and~${dateField}~lt~'${endTicks}'` +
-      `~and~Energieträger~eq~'${carrierCode}'`;
+      `${dateField}~ge~${startExpr}` +
+  `~and~${dateField}~lt~${endExpr}` +
+  `~and~Energieträger~eq~'${carrierCode}'`;
 
     let page = 1;
     const rows = [];
