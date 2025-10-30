@@ -7,15 +7,15 @@ const FILTER_META =
   https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetFilterColumnsErweiterteOeffentlicheEinheitStromerzeugung;
 
 const COLUMNS = [
-  { key: "MaStRNummer", title: "MaStRNummer" },
+  { key: "MaStR-Nummer der Einheit", title: "MaStRNummer" },
   { key: "Anlagenbetreiber (Name)",  title: "Betreiber" },
   { key: "Energieträger",            title: "Energietraeger" },
   { key: "Bruttoleistung",           title: "Bruttoleistung" },
   { key: "Nettonennleistung",        title: "Nettonennleistung" },
   { key: "Bundesland",               title: "Bundesland" },
-  { key: "Plz",                      title: "PLZ" },
+  { key: "Postleitzahl",             title: "PLZ" },
   { key: "Ort",                      title: "Ort" },
-  { key: "InbetriebnahmeDatum", title: "InbetriebnahmeDatum" }
+  { key: "Inbetriebnahmedatum der Einheit", title: "Inbetriebnahme" }
 ];
 
 function toCSV(rows) {
@@ -110,11 +110,10 @@ module.exports = async (req, res) => {
     }
     if (!carrierCode) carrierCode = "2495"; // Fallback: Solare Strahlungsenergie
 
-    // 2) Filter: InbetriebnahmeDatum + Energieträger
-    const dateField = "InbetriebnahmeDatum";
+    // 2) Filter: EegInbetriebnahmeDatum + Energieträger
     const filterRaw =
-      `${dateField}~ge~'${startTicks}'` +
-      `~and~${dateField}~lt~'${endTicks}'` +
+      `EegInbetriebnahmeDatum~ge~'${startTicks}'` +
+      `~and~EegInbetriebnahmeDatum~lt~'${endTicks}'` +
       `~and~Energieträger~eq~'${carrierCode}'`;
 
     let page = 1;
