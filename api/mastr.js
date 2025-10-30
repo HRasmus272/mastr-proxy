@@ -13,7 +13,7 @@ const COLUMNS = [
   { key: "Bruttoleistung",           title: "Bruttoleistung" },
   { key: "Nettonennleistung",        title: "Nettonennleistung" },
   { key: "Bundesland",               title: "Bundesland" },
-  { key: "Postleitzahl",             title: "PLZ" },
+  { key: "Plz",                      title: "PLZ" },
   { key: "Ort",                      title: "Ort" },
   { key: "Inbetriebnahmedatum der Einheit", title: "Inbetriebnahme" }
 ];
