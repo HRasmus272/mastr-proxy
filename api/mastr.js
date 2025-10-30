@@ -62,8 +62,12 @@ module.exports = async (req, res) => {
 
   try {
     const url = new URL(req.url, `https://${req.headers.host}`);
-    const startISO = url.searchParams.get("start");
-    const endISO   = url.searchParams.get("end");
+    let startISO = url.searchParams.get("start");
+    let endISO   = url.searchParams.get("end");
+
+// Für Testzwecke: Dummy-Datum, falls nicht angegeben
+    if (!startISO) startISO = "2024-01-01";
+    if (!endISO)   endISO   = "2024-01-31";
     const carrierQ = (url.searchParams.get("carrier") || "Solare Strahlungsenergie").trim();
     const format   = (url.searchParams.get("format") || "csv").toLowerCase();
 
