@@ -119,10 +119,7 @@ const toDE = (iso) => {
 const s = toDE(startISO);
 const e = toDE(endISO);
 
-const filterRaw =
-  `${dateField}~ge~'${s}'` +
-  `~and~${dateField}~lt~'${e}'` +
-  `~and~Energieträger~eq~'${carrierCode}'`;
+const filterRaw = `In Betrieb~eq~35`;
     
     let page = 1;
     const rows = [];
