@@ -1,5 +1,5 @@
-// /api/mastr.js  — Node.js Serverless Function (CommonJS), kurz laufend
-// Lädt MaStR-Daten paginiert. Standard: 1 Seite, 500 Zeilen -> schnell für Hobby-Timeouts.
+// /api/mastr.js — Node.js Serverless Function (CommonJS), kurz laufend
+// Lädt MaStR-Daten paginiert. Standard: 1 Seite, 500 Zeilen -> schnell & timeout-sicher.
 
 const BASE =
   "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetErweiterteOeffentlicheEinheitStromerzeugung";
@@ -7,15 +7,15 @@ const FILTER_META =
   "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetFilterColumnsErweiterteOeffentlicheEinheitStromerzeugung";
 
 const COLUMNS = [
-  { key: "MaStRNummer", title: "MaStRNummer" },
-  { key: "Anlagenbetreiber (Name)",  title: "Betreiber" },
-  { key: "Energieträger",            title: "Energietraeger" },
-  { key: "Bruttoleistung",           title: "Bruttoleistung" },
-  { key: "Nettonennleistung",        title: "Nettonennleistung" },
-  { key: "Bundesland",               title: "Bundesland" },
-  { key: "Plz",                      title: "PLZ" },
-  { key: "Ort",                      title: "Ort" },
-  { key: "InbetriebnahmeDatum", title: "InbetriebnahmeDatum" }
+  { key: "MaStRNummer",               title: "MaStRNummer" },
+  { key: "Anlagenbetreiber (Name)",   title: "Betreiber" },
+  { key: "Energieträger",             title: "Energietraeger" },
+  { key: "Bruttoleistung",            title: "Bruttoleistung" },
+  { key: "Nettonennleistung",         title: "Nettonennleistung" },
+  { key: "Bundesland",                title: "Bundesland" },
+  { key: "Plz",                       title: "PLZ" },
+  { key: "Ort",                       title: "Ort" },
+  { key: "InbetriebnahmeDatum",       title: "InbetriebnahmeDatum" } // Ticks: /Date(...)/  -> in PBI konvertieren
 ];
 
 function toCSV(rows) {
@@ -56,7 +56,6 @@ async function fetchJSON(url, signal) {
 }
 
 module.exports = async (req, res) => {
-  // --- CORS & caching ---
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cache-Control", "no-store");
 
@@ -66,10 +65,11 @@ module.exports = async (req, res) => {
     const endISO   = url.searchParams.get("end");
     const carrierQ = (url.searchParams.get("carrier") || "Solare Strahlungsenergie").trim();
     const format   = (url.searchParams.get("format") || "csv").toLowerCase();
+    const debug    = url.searchParams.get("debug") === "1";   // <<== NEU
 
-    // Runtime-Schrauben gegen Timeout
-    const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "500", 10), 2000); // klein halten
-    const maxPages = Math.min(parseInt(url.searchParams.get("maxpages") || "1", 10), 20);     // erst 1 Seite
+    // Runtime-Limits gegen Timeouts
+    const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "500", 10), 2000);
+    const maxPages = Math.min(parseInt(url.searchParams.get("maxpages") || "1", 10), 20);
 
     if (!startISO || !endISO) {
       res.status(400).send("Missing 'start' or 'end' (YYYY-MM-DD). Example: ?start=2024-01-01&end=2024-01-31&format=csv");
@@ -83,7 +83,7 @@ module.exports = async (req, res) => {
       return;
     }
 
-    // pro-Request Timeout (8s) – verhindert Hängenbleiben
+    // Timeout für Upstream-Calls
     const ac = new AbortController();
     const to = setTimeout(() => ac.abort("timeout"), 8000);
 
@@ -110,13 +110,40 @@ module.exports = async (req, res) => {
     }
     if (!carrierCode) carrierCode = "2495"; // Fallback: Solare Strahlungsenergie
 
-    // 2) Filter: InbetriebnahmeDatum + Energieträger
+    // 2) Serverseitiger Filter: InbetriebnahmeDatum + Energieträger
     const dateField = "InbetriebnahmeDatum";
     const filterRaw =
       `${dateField}~ge~'${startTicks}'` +
       `~and~${dateField}~lt~'${endTicks}'` +
       `~and~Energieträger~eq~'${carrierCode}'`;
 
+    // Erste Seite-URL (für Debug-Ausgabe)
+    const skip0 = 0, take0 = pageSize, page0 = 1;
+    const upstreamUrl0 =
+      `${BASE}?group=&sort=&aggregate=` +
+      `&page=${page0}&pageSize=${pageSize}` +
+      `&skip=${skip0}&take=${take0}` +
+      `&filter=${encodeURIComponent(filterRaw)}`;
+
+    // ---- DEBUG-AUSGABE (kein Upstream-Call) ----
+    if (debug) {
+      clearTimeout(to);
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.status(200).send(JSON.stringify({
+        dateField,
+        startTicks,
+        endTicks,
+        carrierInput: carrierQ,
+        carrierCode,
+        filterRaw,
+        upstreamUrl: upstreamUrl0,
+        note: "Dies ist nur die Debug-Ausgabe (keine Daten geladen). Entferne &debug=1 für echte Daten."
+      }));
+      return;
+    }
+    // -------------------------------------------
+
+    // Seitenweise laden
     let page = 1;
     const rows = [];
 
@@ -144,15 +171,7 @@ module.exports = async (req, res) => {
       for (const rec of data) {
         const out = {};
         for (const col of COLUMNS) {
-          if (col.key === "Inbetriebnahmedatum der Einheit") {
-            out[col.title] =
-              rec["Inbetriebnahmedatum der Einheit"] ??
-              rec["InbetriebnahmeDatum"] ??
-              rec["EegInbetriebnahmeDatum"] ??
-              "";
-          } else {
-            out[col.title] = rec[col.key] ?? "";
-          }
+          out[col.title] = rec[col.key] ?? "";
         }
         rows.push(out);
       }
