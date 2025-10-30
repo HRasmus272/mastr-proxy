@@ -31,12 +31,11 @@ function toCSV(rows) {
 }
 
 function toTicks(iso) {
-  // Erwartet "YYYY-MM-DD"
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
   if (!m) return null;
   const [, y, mo, d] = m;
-  // MaStR-Filter erwartet: datetime'YYYY-MM-DDT00:00:00'
-  return `datetime'${y}-${mo}-${d}T00:00:00'`;
+  const ms = Date.UTC(Number(y), Number(mo) - 1, Number(d), 0, 0, 0, 0);
+  return `/Date(${ms})/`;
 }
 
 async function fetchJSON(url, signal) {
@@ -114,9 +113,9 @@ module.exports = async (req, res) => {
     // 2) Filter: InbetriebnahmeDatum + Energieträger
     const dateField = "InbetriebnahmeDatum";
     const filterRaw =
-      `${dateField}~ge~${startTicks}` +
-  `~and~${dateField}~lt~${endTicks}` +
-  `~and~Energieträger~eq~'${carrierCode}'`;
+      `${dateField}~ge~'${startTicks}'` +
+      `~and~${dateField}~lt~'${endTicks}'` +
+      `~and~Energieträger~eq~'${carrierCode}'`;
 
     let page = 1;
     const rows = [];
