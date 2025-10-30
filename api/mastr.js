@@ -1,5 +1,5 @@
-// /api/mastr.js — Node.js Serverless Function (CommonJS), kurz laufend
-// Lädt MaStR-Daten paginiert. Standard: 1 Seite, 500 Zeilen -> schnell & timeout-sicher.
+// /api/mastr.js  — Node.js Serverless Function (CommonJS)
+// Lädt MaStR-Daten paginiert. Standard: 1 Seite, 500 Zeilen -> schnell für Hobby-Timeouts.
 
 const BASE =
   "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetErweiterteOeffentlicheEinheitStromerzeugung";
@@ -7,16 +7,18 @@ const FILTER_META =
   "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetFilterColumnsErweiterteOeffentlicheEinheitStromerzeugung";
 
 const COLUMNS = [
-  { key: "MaStRNummer",               title: "MaStRNummer" },
-  { key: "Anlagenbetreiber (Name)",   title: "Betreiber" },
-  { key: "Energieträger",             title: "Energietraeger" },
-  { key: "Bruttoleistung",            title: "Bruttoleistung" },
-  { key: "Nettonennleistung",         title: "Nettonennleistung" },
-  { key: "Bundesland",                title: "Bundesland" },
-  { key: "Plz",                       title: "PLZ" },
-  { key: "Ort",                       title: "Ort" },
-  { key: "InbetriebnahmeDatum",       title: "InbetriebnahmeDatum" } // Ticks: /Date(...)/  -> in PBI konvertieren
+  { key: "MaStRNummer", title: "MaStRNummer" },
+  { key: "Anlagenbetreiber (Name)",  title: "Betreiber" },
+  { key: "Energieträger",            title: "Energietraeger" },
+  { key: "Bruttoleistung",           title: "Bruttoleistung" },
+  { key: "Nettonennleistung",        title: "Nettonennleistung" },
+  { key: "Bundesland",               title: "Bundesland" },
+  { key: "Plz",                      title: "PLZ" },
+  { key: "Ort",                      title: "Ort" },
+  { key: "InbetriebnahmeDatum",      title: "InbetriebnahmeDatum" }
 ];
+
+// ---- Helpers ----
 
 function toCSV(rows) {
   const header = COLUMNS.map(c => c.title).join(",");
@@ -30,12 +32,21 @@ function toCSV(rows) {
   return [header, ...lines].join("\n");
 }
 
-function toTicks(iso) {
+// Wandelt "YYYY-MM-DD" in ISO (nur Datum) — validiert grob
+function toIsoOnlyDate(iso) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
   if (!m) return null;
-  const [, y, mo, d] = m;
-  const ms = Date.UTC(Number(y), Number(mo) - 1, Number(d), 0, 0, 0, 0);
-  return `/Date(${ms})/`;
+  return `${m[1]}-${m[2]}-${m[3]}`;
+}
+
+// Baut MaStR-kompatible Datums-Filter-Teile:
+// InbetriebnahmeDatum~ge~datetime'YYYY-MM-DDT00:00:00'
+function buildDateFilter(field, startISO, endISO) {
+  const s = toIsoOnlyDate(startISO);
+  const e = toIsoOnlyDate(endISO);
+  if (!s || !e) return null;
+  // Enddatum exklusiv (lt)
+  return `${field}~ge~datetime'${s}T00:00:00'~and~${field}~lt~datetime'${e}T00:00:00'`;
 }
 
 async function fetchJSON(url, signal) {
@@ -56,6 +67,7 @@ async function fetchJSON(url, signal) {
 }
 
 module.exports = async (req, res) => {
+  // --- CORS & caching ---
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cache-Control", "no-store");
 
@@ -65,25 +77,26 @@ module.exports = async (req, res) => {
     const endISO   = url.searchParams.get("end");
     const carrierQ = (url.searchParams.get("carrier") || "Solare Strahlungsenergie").trim();
     const format   = (url.searchParams.get("format") || "csv").toLowerCase();
-    const debug    = url.searchParams.get("debug") === "1";   // <<== NEU
+    const debug    = url.searchParams.get("debug") === "1";
 
-    // Runtime-Limits gegen Timeouts
+    // Runtime-Schrauben gegen Timeout
     const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "500", 10), 2000);
-    const maxPages = Math.min(parseInt(url.searchParams.get("maxpages") || "1", 10), 20);
+    const maxPages = Math.min(parseInt(url.searchParams.get("maxpages")  || "1",   10), 20);
 
     if (!startISO || !endISO) {
       res.status(400).send("Missing 'start' or 'end' (YYYY-MM-DD). Example: ?start=2024-01-01&end=2024-01-31&format=csv");
       return;
     }
 
-    const startTicks = toTicks(startISO);
-    const endTicks   = toTicks(endISO);
-    if (!startTicks || !endTicks) {
+    // --- NEU: Korrekte Datums-Syntax für MaStR ---
+    const dateField = "InbetriebnahmeDatum";
+    const dateExpr = buildDateFilter(dateField, startISO, endISO);
+    if (!dateExpr) {
       res.status(400).send("Invalid date format. Use YYYY-MM-DD.");
       return;
     }
 
-    // Timeout für Upstream-Calls
+    // pro-Request Timeout (8s) – verhindert Hängenbleiben
     const ac = new AbortController();
     const to = setTimeout(() => ac.abort("timeout"), 8000);
 
@@ -110,40 +123,14 @@ module.exports = async (req, res) => {
     }
     if (!carrierCode) carrierCode = "2495"; // Fallback: Solare Strahlungsenergie
 
-    // 2) Serverseitiger Filter: InbetriebnahmeDatum + Energieträger
-    const dateField = "InbetriebnahmeDatum";
-    const filterRaw =
-      `${dateField}~ge~'${startTicks}'` +
-      `~and~${dateField}~lt~'${endTicks}'` +
-      `~and~Energieträger~eq~'${carrierCode}'`;
+    // 2) Filter zusammenbauen (Datum + Energieträger)
+    const filterRaw = `${dateExpr}~and~Energieträger~eq~'${carrierCode}'`;
 
-    // Erste Seite-URL (für Debug-Ausgabe)
-    const skip0 = 0, take0 = pageSize, page0 = 1;
-    const upstreamUrl0 =
-      `${BASE}?group=&sort=&aggregate=` +
-      `&page=${page0}&pageSize=${pageSize}` +
-      `&skip=${skip0}&take=${take0}` +
-      `&filter=${encodeURIComponent(filterRaw)}`;
+    // Debug: spätere Einsicht, was genau abgefragt wurde
+    const upstreamFirstPage =
+      `${BASE}?group=&sort=&aggregate=&page=1&pageSize=${pageSize}` +
+      `&skip=0&take=${pageSize}&filter=${encodeURIComponent(filterRaw)}`;
 
-    // ---- DEBUG-AUSGABE (kein Upstream-Call) ----
-    if (debug) {
-      clearTimeout(to);
-      res.setHeader("Content-Type", "application/json; charset=utf-8");
-      res.status(200).send(JSON.stringify({
-        dateField,
-        startTicks,
-        endTicks,
-        carrierInput: carrierQ,
-        carrierCode,
-        filterRaw,
-        upstreamUrl: upstreamUrl0,
-        note: "Dies ist nur die Debug-Ausgabe (keine Daten geladen). Entferne &debug=1 für echte Daten."
-      }));
-      return;
-    }
-    // -------------------------------------------
-
-    // Seitenweise laden
     let page = 1;
     const rows = [];
 
@@ -171,7 +158,15 @@ module.exports = async (req, res) => {
       for (const rec of data) {
         const out = {};
         for (const col of COLUMNS) {
-          out[col.title] = rec[col.key] ?? "";
+          if (col.key === "Inbetriebnahmedatum der Einheit") {
+            out[col.title] =
+              rec["Inbetriebnahmedatum der Einheit"] ??
+              rec["InbetriebnahmeDatum"] ??
+              rec["EegInbetriebnahmeDatum"] ??
+              "";
+          } else {
+            out[col.title] = rec[col.key] ?? "";
+          }
         }
         rows.push(out);
       }
@@ -181,9 +176,24 @@ module.exports = async (req, res) => {
 
     clearTimeout(to);
 
+    // Debug-Ausgaben als Header (leicht einzusehen) + optional Body bei JSON
+    if (debug) {
+      res.setHeader("X-Debug-FilterRaw", filterRaw);
+      res.setHeader("X-Debug-Upstream", upstreamFirstPage);
+    }
+
     if (format === "json") {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
-      res.status(200).send(JSON.stringify(rows));
+      if (debug) {
+        res.status(200).send(JSON.stringify({
+          debug: true,
+          filterRaw,
+          upstreamUrl: upstreamFirstPage,
+          rows
+        }));
+      } else {
+        res.status(200).send(JSON.stringify(rows));
+      }
     } else {
       const csv = toCSV(rows);
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
