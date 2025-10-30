@@ -2,20 +2,20 @@
 // Lädt MaStR-Daten paginiert. Standard: 1 Seite, 500 Zeilen -> schnell für Hobby-Timeouts.
 
 const BASE =
-  https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetErweiterteOeffentlicheEinheitStromerzeugung;
+  "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetErweiterteOeffentlicheEinheitStromerzeugung";
 const FILTER_META =
-  https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetFilterColumnsErweiterteOeffentlicheEinheitStromerzeugung;
+  "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetFilterColumnsErweiterteOeffentlicheEinheitStromerzeugung";
 
 const COLUMNS = [
-  { key: "MaStRNummer", title: "MaStRNummer" },
+  { key: "MaStR-Nummer der Einheit", title: "MaStRNummer" },
   { key: "Anlagenbetreiber (Name)",  title: "Betreiber" },
   { key: "Energieträger",            title: "Energietraeger" },
   { key: "Bruttoleistung",           title: "Bruttoleistung" },
   { key: "Nettonennleistung",        title: "Nettonennleistung" },
   { key: "Bundesland",               title: "Bundesland" },
-  { key: "Plz",                      title: "PLZ" },
+  { key: "Postleitzahl",             title: "PLZ" },
   { key: "Ort",                      title: "Ort" },
-  { key: "InbetriebnahmeDatum", title: "InbetriebnahmeDatum" }
+  { key: "Inbetriebnahmedatum der Einheit", title: "Inbetriebnahme" }
 ];
 
 function toCSV(rows) {
@@ -44,7 +44,7 @@ async function fetchJSON(url, signal) {
       "Accept": "application/json",
       "User-Agent": "mastr-proxy-vercel",
       "X-Requested-With": "XMLHttpRequest",
-      "Referer": https://www.marktstammdatenregister.de/
+      "Referer": "https://www.marktstammdatenregister.de/"
     },
     signal
   });
@@ -87,48 +87,33 @@ module.exports = async (req, res) => {
     const ac = new AbortController();
     const to = setTimeout(() => ac.abort("timeout"), 8000);
 
-    // 1) Energieträger-Code ermitteln (robust, damit kein Crash bei Meta-Ausfall)
-let carrierCode = null;
+    // 1) Energieträger-Code ermitteln
+    const meta = await fetchJSON(FILTER_META, ac.signal);
+    const carrierFilter = Array.isArray(meta)
+      ? meta.find(f => (f.FilterName || "").toLowerCase() === "energieträger")
+      : null;
 
-try {
-  const meta = await fetchJSON(FILTER_META, ac.signal);
-  const carrierFilter = Array.isArray(meta)
-    ? meta.find(f => (f.FilterName || "").toLowerCase() === "energieträger")
-    : null;
-
-  if (carrierFilter && Array.isArray(carrierFilter.ListObject)) {
-    if (/^\d+$/.test(carrierQ)) {
-      const hit = carrierFilter.ListObject.find(x => String(x.Value) === carrierQ);
-      if (hit) carrierCode = String(hit.Value);
+    let carrierCode = null;
+    if (carrierFilter && Array.isArray(carrierFilter.ListObject)) {
+      if (/^\d+$/.test(carrierQ)) {
+        const hit = carrierFilter.ListObject.find(x => String(x.Value) === carrierQ);
+        if (hit) carrierCode = String(hit.Value);
+      }
+      if (!carrierCode) {
+        const cq = carrierQ.toLowerCase();
+        const exact  = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase() === cq);
+        const starts = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().startsWith(cq));
+        const incl   = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().includes(cq));
+        const chosen = exact || starts || incl || null;
+        if (chosen) carrierCode = String(chosen.Value);
+      }
     }
-    if (!carrierCode) {
-      const cq = carrierQ.toLowerCase();
-      const exact  = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase() === cq);
-      const starts = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().startsWith(cq));
-      const incl   = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().includes(cq));
-      const chosen = exact || starts || incl || null;
-      if (chosen) carrierCode = String(chosen.Value);
-    }
-  }
-} catch (e) {
-  // Meta-Endpunkt down/fehlerhaft/Timeout -> still weiterarbeiten
-  // (Crash vermeiden, unten greifen Fallbacks)
-}
+    if (!carrierCode) carrierCode = "2495"; // Fallback: Solare Strahlungsenergie
 
-// Fallbacks, falls oben nichts ermittelt werden konnte:
-if (!carrierCode) {
-  if (/^\d+$/.test(carrierQ)) {
-    carrierCode = String(carrierQ);
-  } else {
-    carrierCode = "2495"; // Solare Strahlungsenergie (Default)
-  }
-}
-
-    // 2) Filter: InbetriebnahmeDatum + Energieträger
-    const dateField = "InbetriebnahmeDatum";
+    // 2) Filter: EegInbetriebnahmeDatum + Energieträger
     const filterRaw =
-      `${dateField}~ge~'${startTicks}'` +
-      `~and~${dateField}~lt~'${endTicks}'` +
+      `EegInbetriebnahmeDatum~ge~'${startTicks}'` +
+      `~and~EegInbetriebnahmeDatum~lt~'${endTicks}'` +
       `~and~Energieträger~eq~'${carrierCode}'`;
 
     let page = 1;
