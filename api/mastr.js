@@ -87,28 +87,42 @@ module.exports = async (req, res) => {
     const ac = new AbortController();
     const to = setTimeout(() => ac.abort("timeout"), 8000);
 
-    // 1) Energieträger-Code ermitteln
-    const meta = await fetchJSON(FILTER_META, ac.signal);
-    const carrierFilter = Array.isArray(meta)
-      ? meta.find(f => (f.FilterName || "").toLowerCase() === "energieträger")
-      : null;
+    // 1) Energieträger-Code ermitteln (robust, damit kein Crash bei Meta-Ausfall)
+let carrierCode = null;
 
-    let carrierCode = null;
-    if (carrierFilter && Array.isArray(carrierFilter.ListObject)) {
-      if (/^\d+$/.test(carrierQ)) {
-        const hit = carrierFilter.ListObject.find(x => String(x.Value) === carrierQ);
-        if (hit) carrierCode = String(hit.Value);
-      }
-      if (!carrierCode) {
-        const cq = carrierQ.toLowerCase();
-        const exact  = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase() === cq);
-        const starts = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().startsWith(cq));
-        const incl   = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().includes(cq));
-        const chosen = exact || starts || incl || null;
-        if (chosen) carrierCode = String(chosen.Value);
-      }
+try {
+  const meta = await fetchJSON(FILTER_META, ac.signal);
+  const carrierFilter = Array.isArray(meta)
+    ? meta.find(f => (f.FilterName || "").toLowerCase() === "energieträger")
+    : null;
+
+  if (carrierFilter && Array.isArray(carrierFilter.ListObject)) {
+    if (/^\d+$/.test(carrierQ)) {
+      const hit = carrierFilter.ListObject.find(x => String(x.Value) === carrierQ);
+      if (hit) carrierCode = String(hit.Value);
     }
-    if (!carrierCode) carrierCode = "2495"; // Fallback: Solare Strahlungsenergie
+    if (!carrierCode) {
+      const cq = carrierQ.toLowerCase();
+      const exact  = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase() === cq);
+      const starts = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().startsWith(cq));
+      const incl   = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().includes(cq));
+      const chosen = exact || starts || incl || null;
+      if (chosen) carrierCode = String(chosen.Value);
+    }
+  }
+} catch (e) {
+  // Meta-Endpunkt down/fehlerhaft/Timeout -> still weiterarbeiten
+  // (Crash vermeiden, unten greifen Fallbacks)
+}
+
+// Fallbacks, falls oben nichts ermittelt werden konnte:
+if (!carrierCode) {
+  if (/^\d+$/.test(carrierQ)) {
+    carrierCode = String(carrierQ);
+  } else {
+    carrierCode = "2495"; // Solare Strahlungsenergie (Default)
+  }
+}
 
     // 2) Filter: InbetriebnahmeDatum + Energieträger
     const dateField = "InbetriebnahmeDatum";
