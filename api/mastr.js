@@ -1,5 +1,5 @@
-// /api/mastr.js — Node.js Serverless Function (CommonJS)
-// MaStR → Proxy mit lokaler Datumsfilterung + optionaler Status-Filterung.
+// /api/mastr.js  — Node.js Serverless Function (CommonJS), kurz laufend
+// Lädt MaStR-Daten paginiert. Standard: 1 Seite, 500 Zeilen -> schnell für Hobby-Timeouts.
 
 const BASE =
   "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetErweiterteOeffentlicheEinheitStromerzeugung";
@@ -55,31 +55,27 @@ async function fetchJSON(url, signal) {
   return resp.json();
 }
 
-// /Date(1704067200000)/  ->  1704067200000
-function parseMasrtDate(value) {
-  const m = /\/Date\((\d+)\)\//.exec(value || "");
-  return m ? Number(m[1]) : null;
-}
-
 module.exports = async (req, res) => {
+  // --- CORS & caching ---
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cache-Control", "no-store");
 
   try {
     const url = new URL(req.url, `https://${req.headers.host}`);
-
     const startISO = url.searchParams.get("start");
     const endISO   = url.searchParams.get("end");
     const carrierQ = (url.searchParams.get("carrier") || "Solare Strahlungsenergie").trim();
     const format   = (url.searchParams.get("format") || "csv").toLowerCase();
-    const statusQ  = url.searchParams.get("status"); // optional, z.B. 35 für "In Betrieb"
-    const debug    = url.searchParams.get("debug") === "1";
 
-    // Eingabe prüfen
+    // Runtime-Schrauben gegen Timeout
+    const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "500", 10), 2000); // klein halten
+    const maxPages = Math.min(parseInt(url.searchParams.get("maxpages") || "1", 10), 20);     // erst 1 Seite
+
     if (!startISO || !endISO) {
       res.status(400).send("Missing 'start' or 'end' (YYYY-MM-DD). Example: ?start=2024-01-01&end=2024-01-31&format=csv");
       return;
     }
+
     const startTicks = toTicks(startISO);
     const endTicks   = toTicks(endISO);
     if (!startTicks || !endTicks) {
@@ -87,58 +83,41 @@ module.exports = async (req, res) => {
       return;
     }
 
-    // Laufzeitgrenzen
-    const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "500", 10), 2000);
-    const maxPages = Math.min(parseInt(url.searchParams.get("maxpages")  || "20", 10), 50);
-
-    // Timeout höher, MaStR ist langsam
+    // pro-Request Timeout (8s) – verhindert Hängenbleiben
     const ac = new AbortController();
-    const to = setTimeout(() => ac.abort("timeout"), 25000);
+    const to = setTimeout(() => ac.abort("timeout"), 8000);
 
-    // Energieträger ermitteln (robust, fällt auf 2495 zurück)
-    let carrierCode = "2495";
-    try {
-      const meta = await fetchJSON(FILTER_META, ac.signal);
-      const carrierFilter = Array.isArray(meta)
-        ? meta.find(f => (f.FilterName || "").toLowerCase() === "energieträger")
-        : null;
-      if (carrierFilter && Array.isArray(carrierFilter.ListObject)) {
-        if (/^\d+$/.test(carrierQ)) {
-          const hit = carrierFilter.ListObject.find(x => String(x.Value) === carrierQ);
-          if (hit) carrierCode = String(hit.Value);
-        } else {
-          const cq = carrierQ.toLowerCase();
-          const exact  = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase() === cq);
-          const starts = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().startsWith(cq));
-          const incl   = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().includes(cq));
-          const chosen = exact || starts || incl || null;
-          if (chosen) carrierCode = String(chosen.Value);
-        }
+    // 1) Energieträger-Code ermitteln
+    const meta = await fetchJSON(FILTER_META, ac.signal);
+    const carrierFilter = Array.isArray(meta)
+      ? meta.find(f => (f.FilterName || "").toLowerCase() === "energieträger")
+      : null;
+
+    let carrierCode = null;
+    if (carrierFilter && Array.isArray(carrierFilter.ListObject)) {
+      if (/^\d+$/.test(carrierQ)) {
+        const hit = carrierFilter.ListObject.find(x => String(x.Value) === carrierQ);
+        if (hit) carrierCode = String(hit.Value);
       }
-    } catch (_) {
-      // meta down → einfach Fallback behalten
-    }
-
-    // ↓↓↓ WICHTIG: Upstream NICHT nach Datum filtern (wird ignoriert)
-    // Wir filtern nur nach Energieträger + optional Betriebs-Status.
-    // Status: "In Betrieb" = 35 (optional)
-    const filters = [];
-    filters.push(`Energieträger~eq~'${carrierCode}'`);
-    if (statusQ) {
-      // wenn status=35 o.ä. mitgegeben: numerisch ohne Quotes verwenden
-      if (/^\d+$/.test(statusQ)) {
-        filters.push(`In Betrieb~eq~${statusQ}`);
-      } else {
-        // falls jemand "In Betrieb" schreibt → als Name filtern (GUI-Style)
-        filters.push(`In Betrieb~eq~35`);
+      if (!carrierCode) {
+        const cq = carrierQ.toLowerCase();
+        const exact  = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase() === cq);
+        const starts = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().startsWith(cq));
+        const incl   = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().includes(cq));
+        const chosen = exact || starts || incl || null;
+        if (chosen) carrierCode = String(chosen.Value);
       }
     }
+    if (!carrierCode) carrierCode = "2495"; // Fallback: Solare Strahlungsenergie
 
-    const filterRaw = filters.join("~and~");
+    // 2) Filter: EegInbetriebnahmeDatum + Energieträger
+    const filterRaw =
+      `EegInbetriebnahmeDatum~ge~'${startTicks}'` +
+      `~and~EegInbetriebnahmeDatum~lt~'${endTicks}'` +
+      `~and~Energieträger~eq~'${carrierCode}'`;
 
     let page = 1;
     const rows = [];
-    const upstreamsTried = [];
 
     while (page <= maxPages) {
       const skip = (page - 1) * pageSize;
@@ -148,11 +127,16 @@ module.exports = async (req, res) => {
         `${BASE}?group=&sort=&aggregate=` +
         `&page=${page}&pageSize=${pageSize}` +
         `&skip=${skip}&take=${take}` +
-        (filterRaw ? `&filter=${encodeURIComponent(filterRaw)}` : "");
-
-      upstreamsTried.push(q);
+        `&filter=${encodeURIComponent(filterRaw)}`;
 
       const j = await fetchJSON(q, ac.signal);
+
+      if (j && j.Error) {
+        clearTimeout(to);
+        res.status(502).send(`Upstream reported Error (Type=${j.Type || "?"}): ${j.Message || "no message"}`);
+        return;
+      }
+
       const data = Array.isArray(j) ? j : (j.Data || j.data || []);
       if (!Array.isArray(data) || data.length === 0) break;
 
@@ -177,40 +161,14 @@ module.exports = async (req, res) => {
 
     clearTimeout(to);
 
-    // Lokale Datumsfilterung (einziger zuverlässiger Weg)
-    const fromMs = Date.parse(`${startISO}T00:00:00Z`);
-    const toMs   = Date.parse(`${endISO}T00:00:00Z`);
-    const filtered = rows.filter(r => {
-      const ms = parseMasrtDate(
-        r["Inbetriebnahme"] ||
-        r["InbetriebnahmeDatum"] ||
-        r["Inbetriebnahmedatum der Einheit"]
-      );
-      return ms && ms >= fromMs && ms < toMs;
-    });
-
-    if (debug) {
-      res.setHeader("Content-Type", "application/json; charset=utf-8");
-      res.status(200).send(JSON.stringify({
-        debug: true,
-        input: { startISO, endISO, carrierQ, statusQ, pageSize, maxPages },
-        filtersSentUpstream: filterRaw || "(none)",
-        upstreamUrlsTried: upstreamsTried.slice(0, 5), // kürzen
-        counts: { upstreamTotal: rows.length, afterFilter: filtered.length }
-      }));
-      return;
-    }
-
-    // Ausgabe
     if (format === "json") {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
-      res.status(200).send(JSON.stringify(filtered));
+      res.status(200).send(JSON.stringify(rows));
     } else {
-      const csv = toCSV(filtered);
+      const csv = toCSV(rows);
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.status(200).send(csv);
     }
-
   } catch (err) {
     const msg = (err && err.message) ? err.message : String(err);
     res.status(502).send(`Proxy error: ${msg}`);
