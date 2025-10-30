@@ -1,4 +1,4 @@
-// /api/mastr.js  — Node.js Serverless Function (CommonJS), kurz laufend
+// /api/mastr.js — Node.js Serverless Function (CommonJS)
 // Lädt MaStR-Daten paginiert. Standard: 1 Seite, 500 Zeilen -> schnell für Hobby-Timeouts.
 
 const BASE =
@@ -55,30 +55,28 @@ async function fetchJSON(url, signal) {
   return resp.json();
 }
 
+// Hilfsfunktion zum Parsen von /Date(1704067200000)/
+function parseMasrtDate(value) {
+  const m = /\/Date\((\d+)\)\//.exec(value || "");
+  return m ? Number(m[1]) : null;
+}
+
 module.exports = async (req, res) => {
-  // --- CORS & caching ---
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cache-Control", "no-store");
 
   try {
     const url = new URL(req.url, `https://${req.headers.host}`);
-    let startISO = url.searchParams.get("start");
-    let endISO   = url.searchParams.get("end");
-
-// Für Testzwecke: Dummy-Datum, falls nicht angegeben
-    if (!startISO) startISO = "2024-01-01";
-    if (!endISO)   endISO   = "2024-01-31";
+    const startISO = url.searchParams.get("start");
+    const endISO   = url.searchParams.get("end");
     const carrierQ = (url.searchParams.get("carrier") || "Solare Strahlungsenergie").trim();
     const format   = (url.searchParams.get("format") || "csv").toLowerCase();
 
-    // Runtime-Schrauben gegen Timeout
-    const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "500", 10), 2000); // klein halten
-    const maxPages = Math.min(parseInt(url.searchParams.get("maxpages") || "1", 10), 20);     // erst 1 Seite
-
+    // --- Eingabeprüfung ---
     if (!startISO || !endISO) {
-  // Für den Test: Dummy-Werte, damit der Proxy trotzdem läuft
-  console.log("⚠️ Kein start/end angegeben – Dummy-Werte verwendet");
-}
+      res.status(400).send("Missing 'start' or 'end' (YYYY-MM-DD). Example: ?start=2024-01-01&end=2024-01-31&format=csv");
+      return;
+    }
 
     const startTicks = toTicks(startISO);
     const endTicks   = toTicks(endISO);
@@ -87,11 +85,14 @@ module.exports = async (req, res) => {
       return;
     }
 
-    // pro-Request Timeout (8s) – verhindert Hängenbleiben
+    // --- Laufzeitgrenzen ---
+    const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "500", 10), 2000);
+    const maxPages = Math.min(parseInt(url.searchParams.get("maxpages") || "1", 10), 20);
+
     const ac = new AbortController();
     const to = setTimeout(() => ac.abort("timeout"), 8000);
 
-    // 1) Energieträger-Code ermitteln
+    // --- Energieträger-Code ermitteln ---
     const meta = await fetchJSON(FILTER_META, ac.signal);
     const carrierFilter = Array.isArray(meta)
       ? meta.find(f => (f.FilterName || "").toLowerCase() === "energieträger")
@@ -114,17 +115,20 @@ module.exports = async (req, res) => {
     }
     if (!carrierCode) carrierCode = "2495"; // Fallback: Solare Strahlungsenergie
 
-// 2) Filter: Inbetriebnahmedatum der Einheit + Energieträger (dd.MM.yyyy)
-const dateField = "InbetriebnahmeDatumDerEinheit";
-const toDE = (iso) => {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
-  return m ? `${m[3]}.${m[2]}.${m[1]}` : iso; // "2024-01-31" -> "31.01.2024"
-};
-const s = toDE(startISO);
-const e = toDE(endISO);
+    // --- Filterstring (wird zwar an API geschickt, aber API ignoriert Datum) ---
+    const dateField = "InbetriebnahmeDatum";
+    const toDE = (iso) => {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+      return m ? `${m[3]}.${m[2]}.${m[1]}` : iso;
+    };
+    const s = toDE(startISO);
+    const e = toDE(endISO);
+    const filterRaw =
+      `${dateField}~ge~'${s}'` +
+      `~and~${dateField}~lt~'${e}'` +
+      `~and~Energieträger~eq~'${carrierCode}'`;
 
-const filterRaw = `In Betrieb~eq~35`;
-    
+    // --- Daten laden ---
     let page = 1;
     const rows = [];
 
@@ -139,13 +143,6 @@ const filterRaw = `In Betrieb~eq~35`;
         `&filter=${encodeURIComponent(filterRaw)}`;
 
       const j = await fetchJSON(q, ac.signal);
-
-      if (j && j.Error) {
-        clearTimeout(to);
-        res.status(502).send(`Upstream reported Error (Type=${j.Type || "?"}): ${j.Message || "no message"}`);
-        return;
-      }
-
       const data = Array.isArray(j) ? j : (j.Data || j.data || []);
       if (!Array.isArray(data) || data.length === 0) break;
 
@@ -170,11 +167,24 @@ const filterRaw = `In Betrieb~eq~35`;
 
     clearTimeout(to);
 
+    // --- Lokale Nachfilterung nach Datum ---
+    const fromMs = Date.parse(`${startISO}T00:00:00Z`);
+    const toMs   = Date.parse(`${endISO}T00:00:00Z`);
+    const filtered = rows.filter(r => {
+      const ms = parseMasrtDate(
+        r["Inbetriebnahme"] ||
+        r["InbetriebnahmeDatum"] ||
+        r["Inbetriebnahmedatum der Einheit"]
+      );
+      return ms && ms >= fromMs && ms < toMs;
+    });
+
+    // --- Ausgabe ---
     if (format === "json") {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
-      res.status(200).send(JSON.stringify(rows));
+      res.status(200).send(JSON.stringify(filtered));
     } else {
-      const csv = toCSV(rows);
+      const csv = toCSV(filtered);
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.status(200).send(csv);
     }
