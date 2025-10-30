@@ -8,13 +8,13 @@ const FILTER_META =
 
 const COLUMNS = [
   { key: "MaStR-Nummer der Einheit", title: "MaStRNummer" },
-  { key: "Anlagenbetreiber (Name)",  title: "Betreiber" },
-  { key: "Energieträger",            title: "Energietraeger" },
-  { key: "Bruttoleistung",           title: "Bruttoleistung" },
-  { key: "Nettonennleistung",        title: "Nettonennleistung" },
-  { key: "Bundesland",               title: "Bundesland" },
-  { key: "Postleitzahl",             title: "PLZ" },
-  { key: "Ort",                      title: "Ort" },
+  { key: "Anlagenbetreiber (Name)", title: "Betreiber" },
+  { key: "Energieträger", title: "Energietraeger" },
+  { key: "Bruttoleistung", title: "Bruttoleistung" },
+  { key: "Nettonennleistung", title: "Nettonennleistung" },
+  { key: "Bundesland", title: "Bundesland" },
+  { key: "Postleitzahl", title: "PLZ" },
+  { key: "Ort", title: "Ort" },
   { key: "Inbetriebnahmedatum der Einheit", title: "Inbetriebnahme" }
 ];
 
@@ -68,18 +68,20 @@ module.exports = async (req, res) => {
   try {
     const url = new URL(req.url, `https://${req.headers.host}`);
     const startISO = url.searchParams.get("start");
-    const endISO   = url.searchParams.get("end");
+    const endISO = url.searchParams.get("end");
     const carrierQ = (url.searchParams.get("carrier") || "Solare Strahlungsenergie").trim();
-    const format   = (url.searchParams.get("format") || "csv").toLowerCase();
+    const format = (url.searchParams.get("format") || "csv").toLowerCase();
 
     // --- Eingabeprüfung ---
     if (!startISO || !endISO) {
-      res.status(400).send("Missing 'start' or 'end' (YYYY-MM-DD). Example: ?start=2024-01-01&end=2024-01-31&format=csv");
+      res
+        .status(400)
+        .send("Missing 'start' or 'end' (YYYY-MM-DD). Example: ?start=2024-01-01&end=2024-01-31&format=csv");
       return;
     }
 
     const startTicks = toTicks(startISO);
-    const endTicks   = toTicks(endISO);
+    const endTicks = toTicks(endISO);
     if (!startTicks || !endTicks) {
       res.status(400).send("Invalid date format. Use YYYY-MM-DD.");
       return;
@@ -106,16 +108,16 @@ module.exports = async (req, res) => {
       }
       if (!carrierCode) {
         const cq = carrierQ.toLowerCase();
-        const exact  = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase() === cq);
+        const exact = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase() === cq);
         const starts = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().startsWith(cq));
-        const incl   = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().includes(cq));
+        const incl = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().includes(cq));
         const chosen = exact || starts || incl || null;
         if (chosen) carrierCode = String(chosen.Value);
       }
     }
     if (!carrierCode) carrierCode = "2495"; // Fallback: Solare Strahlungsenergie
 
-    // --- Filterstring (wird zwar an API geschickt, aber API ignoriert Datum) ---
+    // --- Filterstring (wird an API geschickt, API ignoriert Datum) ---
     const dateField = "InbetriebnahmeDatum";
     const toDE = (iso) => {
       const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
@@ -167,9 +169,9 @@ module.exports = async (req, res) => {
 
     clearTimeout(to);
 
-    // --- Lokale Nachfilterung nach Datum ---
+    // --- Lokale Nachfilterung nach Inbetriebnahmedatum ---
     const fromMs = Date.parse(`${startISO}T00:00:00Z`);
-    const toMs   = Date.parse(`${endISO}T00:00:00Z`);
+    const toMs = Date.parse(`${endISO}T00:00:00Z`);
     const filtered = rows.filter(r => {
       const ms = parseMasrtDate(
         r["Inbetriebnahme"] ||
@@ -188,6 +190,7 @@ module.exports = async (req, res) => {
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.status(200).send(csv);
     }
+
   } catch (err) {
     const msg = (err && err.message) ? err.message : String(err);
     res.status(502).send(`Proxy error: ${msg}`);
