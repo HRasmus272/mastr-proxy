@@ -47,7 +47,13 @@ const COLUMNS = [
   // <<<<<< Das Feld, das du suchst — exakten Key mit &debug=keys ermitteln und HIER einsetzen
   { key: "ArtDerSolaranlageBezeichnung",       title: "Art der Solaranlage" },
   { key: "AnzahlSolarModule",                  title: "Anzahl der Solar-Module" },
-  { key: "HauptausrichtungSolarModule",        title: "Hauptausrichtung der Solar-Module" },
+  { key: "HauptausrichtungSolarModuleBezeichnung",        title: "Hauptausrichtung der Solar-Module" },
+  { key: "HauptneigungswinkelSolarmodule",       title: "Hauptneigungswinkel der Solar-Module" },
+  { key: "SolarparkName",                        title: "Name des Solarparks" },
+  { key: "SpeicherEinheitMastrNummer",        title: "MaStR-Nr. der Speichereinheit" },
+  { key: "StromspeichertechnologieBezeichnung",       title: "Speichertechnologie" },
+  { key: "NutzbareSpeicherkapazitaet",                        title: "Nutzbare Speicherkapazitaet in kWh" },
+  { key: "DatumLetzteAktualisierung",        title: "Letzte Aktualisierung" },
 
   // BUGFIX: In deiner letzten Version war "Flurstueck" fälschlich mit title "Betreiber" dupliziert – entfernt.
 ];
