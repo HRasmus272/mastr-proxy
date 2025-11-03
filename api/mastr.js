@@ -6,16 +6,55 @@ const BASE =
 const FILTER_META =
   "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetFilterColumnsErweiterteOeffentlicheEinheitStromerzeugung";
 
+// === Deine gewünschte Feldliste ===
+// key = Upstream-Name (so liefert MaStR), title = Spaltenname in der Ausgabe
 const COLUMNS = [
-  { key: "MaStRNummer",              title: "MaStRNummer" },
-  { key: "Anlagenbetreiber (Name)",  title: "Betreiber" },
-  { key: "Energieträger",            title: "Energietraeger" },
-  { key: "Bruttoleistung",           title: "Bruttoleistung" },
-  { key: "Nettonennleistung",        title: "Nettonennleistung" },
-  { key: "Bundesland",               title: "Bundesland" },
-  { key: "Postleitzahl",             title: "PLZ" },
-  { key: "Ort",                      title: "Ort" },
-  { key: "Inbetriebnahmedatum der Einheit", title: "Inbetriebnahme" }
+  { key: "MaStRNummer",                                      title: "MaStR-Nr. der Einheit" },
+  { key: "Anzeige-Name der Einheit",                         title: "Anzeige-Name der Einheit" },
+  { key: "Betriebs-Status",                                  title: "Betriebs-Status" },
+  { key: "Energieträger",                                    title: "Energieträger" },
+  { key: "Bruttoleistung der Einheit",                       title: "Bruttoleistung der Einheit" },
+  { key: "Nettonennleistung der Einheit",                    title: "Nettonennleistung der Einheit" },
+  { key: "Inbetriebnahmedatum der Einheit",                  title: "Inbetriebnahmedatum der Einheit" },
+  { key: "Inbetriebnahmedatum der Einheit am aktuellen Standort", title: "Inbetriebnahmedatum der Einheit am aktuellen Standort" },
+  { key: "Registrierungsdatum der Einheit",                  title: "Registrierungsdatum der Einheit" },
+  { key: "Bundesland",                                       title: "Bundesland" },
+  { key: "Postleitzahl",                                     title: "Postleitzahl" },
+  { key: "Ort",                                              title: "Ort" },
+  { key: "Straße",                                           title: "Straße" },
+  { key: "Hausnummer",                                       title: "Hausnummer" },
+  { key: "Gemarkung",                                        title: "Gemarkung" },
+  { key: "Flurstück",                                        title: "Flurstück" },
+  { key: "Gemeindeschlüssel",                                title: "Gemeindeschlüssel" },
+  { key: "Gemeinde",                                         title: "Gemeinde" },
+  { key: "Landkreis",                                        title: "Landkreis" },
+  { key: "Koordinate: Breitengrad (WGS84)",                  title: "Koordinate: Breitengrad (WGS84)" },
+  { key: "Koordinate: Längengrad (WGS84)",                   title: "Koordinate: Längengrad (WGS84)" },
+  { key: "Technologie der Stromerzeugung",                   title: "Technologie der Stromerzeugung" },
+  { key: "Art der Solaranlage",                              title: "Art der Solaranlage" },
+  { key: "Anzahl der Solar-Module",                          title: "Anzahl der Solar-Module" },
+  { key: "Hauptausrichtung der Solar-Module",                title: "Hauptausrichtung der Solar-Module" },
+  { key: "Hauptneigungswinkel der Solar-Module",             title: "Hauptneigungswinkel der Solar-Module" },
+  { key: "Name des Solarparks",                              title: "Name des Solarparks" },
+  { key: "MaStR-Nummer der Speichereinheit",                 title: "MaStR-Nr. der Speichereinheit" },
+  { key: "Speichertechnologie",                              title: "Speichertechnologie" },
+  { key: "Nutzbare Speicherkapazität in kWh",                title: "Nutzbare Speicherkapazität in kWh" },
+  { key: "Letzte Aktualisierung",                            title: "Letzte Aktualisierung" },
+  { key: "Datum der endgültigen Stilllegung",                title: "Datum der endgültigen Stilllegung" },
+  { key: "Datum der geplanten Inbetriebnahme",               title: "Datum der geplanten Inbetriebnahme" },
+  { key: "Name des Anlagenbetreibers (nur Org.)",            title: "Name des Anlagenbetreibers (nur Org.)" },
+  { key: "MaStR-Nummer des Anlagenbetreibers",               title: "MaStR-Nr. des Anlagenbetreibers" },
+  { key: "Volleinspeisung oder Teileinspeisung",             title: "Volleinspeisung oder Teileinspeisung" },
+  { key: "MaStR-Nummer der Genehmigung",                     title: "MaStR-Nr. der Genehmigung" },
+  { key: "Name des Anschluss-Netzbetreibers",                title: "Name des Anschluss-Netzbetreibers" },
+  { key: "MaStR-Nummer des Anschluss-Netzbetreibers",        title: "MaStR-Nr. des Anschluss-Netzbetreibers" },
+  { key: "Netzbetreiberprüfung",                             title: "Netzbetreiberprüfung" },
+  { key: "Spannungsebene",                                   title: "Spannungsebene" },
+  { key: "MaStR-Nummer der Lokation",                        title: "MaStR-Nr. der Lokation" },
+  { key: "MaStR-Nummer der EEG-Anlage",                      title: "MaStR-Nr. der EEG-Anlage" },
+  { key: "EEG-Anlagenschlüssel",                             title: "EEG-Anlagenschlüssel" },
+  { key: "Inbetriebnahmedatum der EEG-Anlage",               title: "Inbetriebnahmedatum der EEG-Anlage" },
+  { key: "Installierte Leistung der EEG-Anlage",             title: "Installierte Leistung der EEG-Anlage" }
 ];
 
 function toCSV(rows) {
@@ -130,15 +169,18 @@ module.exports = async (req, res) => {
         const out = {};
         for (const col of COLUMNS) {
           if (col.key === "Inbetriebnahmedatum der Einheit") {
-            out[col.title] =
+            // minimaler Fallback; wenn nicht gewünscht, ersetze die 3 Zeilen durch: const val = rec[col.key] ?? "";
+            const val =
               rec["Inbetriebnahmedatum der Einheit"] ??
               rec["InbetriebnahmeDatum"] ??
               rec["EegInbetriebnahmeDatum"] ??
               "";
+            out[col.title] = val;
           } else {
             out[col.title] = rec[col.key] ?? "";
           }
         }
+        // (hier ggf. lokale Datumsfilterung einsetzen – aktuell nicht aktiv)
         rows.push(out);
       }
 
