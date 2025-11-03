@@ -34,6 +34,11 @@ const COLUMNS = [
   { key: "Gemeinde",                 title: "Gemeinde" },
   { key: "Landkreis",                title: "Landkreis" },
   { key: "Breitengrad",              title: "Koordinate: Breitengrad (WGS84)" },
+  { key: "Laengengrad",               title: "Koordinate: Längengrad (WGS84)" },
+  { key: "TechnologieStromerzeugung",       title: "Technologie der Stromerzeugung" },
+  { key: "SolarArt",                 title: "Art der Solaranlage" },
+  { key: "AnzahlSolarModule",                title: "Anzahl der Solar-Module" },
+  { key: "HauptausrichtungSolarModule",              title: "Hauptausrichtung der Solar-Module" },
   { key: "Flurstueck",               title: "Betreiber" }
 ];
 
