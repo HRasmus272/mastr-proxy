@@ -14,15 +14,55 @@ const BACKOFF_BASE_MS = 600; // 600ms, 1200ms
 
 // Spaltenmapping für CSV/JSON-Normalisierung
 const COLUMNS = [
-  { key: "MaStR-Nummer der Einheit", title: "MaStRNummer" },
-  { key: "Anlagenbetreiber (Name)",  title: "Betreiber" },
-  { key: "Energieträger",            title: "Energietraeger" },
-  { key: "Bruttoleistung",           title: "Bruttoleistung" },
-  { key: "Nettonennleistung",        title: "Nettonennleistung" },
+  // schon vorhanden (lassen wir drin):
+  { key: "MaStR-Nummer der Einheit", title: "MaStR-Nr. der Einheit" },
+  { key: "Anlagenbetreiber (Name)",  title: "Name des Anlagenbetreibers (nur Org.)" }, // siehe Wunschliste
+  { key: "Energieträger",            title: "Energieträger" },
+  { key: "Bruttoleistung",           title: "Bruttoleistung der Einheit" }, // Fallback-Logik unten
+  { key: "Nettonennleistung",        title: "Nettonennleistung der Einheit" },
   { key: "Bundesland",               title: "Bundesland" },
-  { key: "Postleitzahl",             title: "PLZ" },
+  { key: "Postleitzahl",             title: "Postleitzahl" },
   { key: "Ort",                      title: "Ort" },
-  { key: "Inbetriebnahmedatum der Einheit", title: "Inbetriebnahme" }
+  { key: "Inbetriebnahmedatum der Einheit", title: "Inbetriebnahmedatum der Einheit" },
+
+  // neu (deine Liste):
+  { key: "Anzeige-Name der Einheit",                           title: "Anzeige-Name der Einheit" },
+  { key: "Betriebs-Status",                                    title: "Betriebs-Status" },
+  { key: "Inbetriebnahmedatum der Einheit am aktuellen Standort", title: "Inbetriebnahmedatum der Einheit am aktuellen Standort" },
+  { key: "Registrierungsdatum der Einheit",                    title: "Registrierungsdatum der Einheit" },
+  { key: "Straße",                                             title: "Straße" },
+  { key: "Hausnummer",                                         title: "Hausnummer" },
+  { key: "Gemarkung",                                          title: "Gemarkung" },
+  { key: "Flurstück",                                          title: "Flurstück" },
+  { key: "Gemeindeschlüssel",                                  title: "Gemeindeschlüssel" },
+  { key: "Gemeinde",                                           title: "Gemeinde" },
+  { key: "Landkreis",                                          title: "Landkreis" },
+  { key: "Koordinate: Breitengrad (WGS84)",                    title: "Koordinate: Breitengrad (WGS84)" },
+  { key: "Koordinate: Längengrad (WGS84)",                     title: "Koordinate: Längengrad (WGS84)" },
+  { key: "Technologie der Stromerzeugung",                     title: "Technologie der Stromerzeugung" },
+  { key: "Art der Solaranlage",                                title: "Art der Solaranlage" },
+  { key: "Anzahl der Solar-Module",                            title: "Anzahl der Solar-Module" },
+  { key: "Hauptausrichtung der Solar-Module",                  title: "Hauptausrichtung der Solar-Module" },
+  { key: "Hauptneigungswinkel der Solar-Module",               title: "Hauptneigungswinkel der Solar-Module" },
+  { key: "Name des Solarparks",                                title: "Name des Solarparks" },
+  { key: "MaStR-Nummer der Speichereinheit",                   title: "MaStR-Nr. der Speichereinheit" },
+  { key: "Speichertechnologie",                                title: "Speichertechnologie" },
+  { key: "Nutzbare Speicherkapazität in kWh",                  title: "Nutzbare Speicherkapazität in kWh" },
+  { key: "Letzte Aktualisierung",                              title: "Letzte Aktualisierung" },
+  { key: "Datum der endgültigen Stilllegung",                  title: "Datum der endgültigen Stilllegung" },
+  { key: "Datum der geplanten Inbetriebnahme",                 title: "Datum der geplanten Inbetriebnahme" },
+  { key: "MaStR-Nummer des Anlagenbetreibers",                 title: "MaStR-Nr. des Anlagenbetreibers" },
+  { key: "Volleinspeisung oder Teileinspeisung",               title: "Volleinspeisung oder Teileinspeisung" },
+  { key: "MaStR-Nummer der Genehmigung",                       title: "MaStR-Nr. der Genehmigung" },
+  { key: "Name des Anschluss-Netzbetreibers",                  title: "Name des Anschluss-Netzbetreibers" },
+  { key: "MaStR-Nummer des Anschluss-Netzbetreibers",          title: "MaStR-Nr. des Anschluss-Netzbetreibers" },
+  { key: "Netzbetreiberprüfung",                               title: "Netzbetreiberprüfung" },
+  { key: "Spannungsebene",                                     title: "Spannungsebene" },
+  { key: "MaStR-Nummer der Lokation",                          title: "MaStR-Nr. der Lokation" },
+  { key: "MaStR-Nummer der EEG-Anlage",                        title: "MaStR-Nr. der EEG-Anlage" },
+  { key: "EEG-Anlagenschlüssel",                               title: "EEG-Anlagenschlüssel" },
+  { key: "Inbetriebnahmedatum der EEG-Anlage",                 title: "Inbetriebnahmedatum der EEG-Anlage" },
+  { key: "Installierte Leistung der EEG-Anlage",               title: "Installierte Leistung der EEG-Anlage" }
 ];
 
 // ---------------------- Helper ----------------------
@@ -214,21 +254,32 @@ module.exports = async (req, res) => {
 
       if (!data.length) break;
 
-      for (const rec of data) {
-        const out = {};
-        for (const col of COLUMNS) {
-          if (col.key === "Inbetriebnahmedatum der Einheit") {
-            out[col.title] =
-              rec["Inbetriebnahmedatum der Einheit"] ??
-              rec["InbetriebnahmeDatum"] ??
-              rec["EegInbetriebnahmeDatum"] ??
-              "";
-          } else {
-            out[col.title] = rec[col.key] ?? "";
-          }
-        }
-        rows.push(out);
-      }
+for (const rec of data) {
+  const out = {};
+  for (const col of COLUMNS) {
+    const k = col.key;
+    let v;
+
+    // Spezielle Fallbacks/Varianten:
+    if (k === "Inbetriebnahmedatum der Einheit") {
+      v = rec["Inbetriebnahmedatum der Einheit"] ?? rec["InbetriebnahmeDatum"] ?? rec["EegInbetriebnahmeDatum"];
+    } else if (k === "Bruttoleistung") {
+      v = rec["Bruttoleistung der Einheit"] ?? rec["Bruttoleistung"];
+    } else if (k === "Nettonennleistung") {
+      v = rec["Nettonennleistung der Einheit"] ?? rec["Nettonennleistung"];
+    } else if (k === "MaStR-Nummer der Einheit") {
+      v = rec["MaStR-Nummer der Einheit"] ?? rec["MaStR-Nummer"];
+    } else if (k === "Anlagenbetreiber (Name)") {
+      v = rec["Name des Anlagenbetreibers (nur Org.)"] ?? rec["Anlagenbetreiber (Name)"];
+    } else {
+      // Standard: 1:1 Key übernehmen
+      v = rec[k];
+    }
+
+    out[col.title] = (v === undefined || v === null) ? "" : v;
+  }
+  rows.push(out);
+}
 
       page++;
     }
