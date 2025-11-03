@@ -20,11 +20,12 @@ const COLUMNS = [
   { key: "EnergietraegerName",       title: "Energietraeger" },
   { key: "Bruttoleistung",           title: "Bruttoleistung" },
   { key: "Nettonennleistung",        title: "Nettonennleistung" },
-  { key: "AnlagenbetreiberName",     title: "Betreiber" },   
+  { key: "InbetriebnahmeDatum",      title: "Inbetriebnahme" },
+  { key: "InbetriebnahmeDatumamaktuellenStandort",      title: "InbetriebnahmeDatumamaktuellenStandort" },
   { key: "Bundesland",               title: "Bundesland" },
   { key: "Plz",                      title: "PLZ" },
   { key: "Ort",                      title: "Ort" },
-  { key: "InbetriebnahmeDatum",      title: "Inbetriebnahme" }
+  { key: "AnlagenbetreiberName",     title: "Betreiber" }
 ];
 
 // ---------------------- Helper ----------------------
