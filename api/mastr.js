@@ -27,7 +27,7 @@ const COLUMNS = [
   { key: "InbetriebnahmeDatum",                title: "Inbetriebnahme" },
 
   // Vermutete Schreibweise in CamelCase – mit debug=keys verifizieren:
-  { key: "InbetriebnahmeDatumAmAktuellenStandort", title: "InbetriebnahmeDatumamaktuellenStandort" },
+  { key: "InbetriebnahmeDatumAmAktuellenOrt", title: "Inbetriebnahmedatum der Einheit am aktuellen Standort" },
 
   { key: "EinheitRegistrierungsdatum",         title: "Registrierungsdatum der Einheit" },
   { key: "Bundesland",                         title: "Bundesland" },
@@ -45,8 +45,7 @@ const COLUMNS = [
   { key: "TechnologieStromerzeugung",          title: "Technologie der Stromerzeugung" },
 
   // <<<<<< Das Feld, das du suchst — exakten Key mit &debug=keys ermitteln und HIER einsetzen
-  { key: "SolarArt",                           title: "Art der Solaranlage" },
-
+  { key: "ArtDerSolaranlageBezeichnung",       title: "Art der Solaranlage" },
   { key: "AnzahlSolarModule",                  title: "Anzahl der Solar-Module" },
   { key: "HauptausrichtungSolarModule",        title: "Hauptausrichtung der Solar-Module" },
 
