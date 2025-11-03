@@ -263,32 +263,8 @@ module.exports = async (req, res) => {
 
 for (const rec of data) {
   const out = {};
-  for (const col of COLUMNS) {
-    const k = col.key;
-    let v;
-
-    // Spezielle Fallbacks/Varianten:
-    if (k === "Inbetriebnahmedatum der Einheit") {
-      v = rec["Inbetriebnahmedatum der Einheit"] ?? rec["InbetriebnahmeDatum"] ?? rec["EegInbetriebnahmeDatum"];
-    } else if (k === "Bruttoleistung") {
-      v = rec["Bruttoleistung der Einheit"] ?? rec["Bruttoleistung"];
-    } else if (k === "Nettonennleistung") {
-      v = rec["Nettonennleistung der Einheit"] ?? rec["Nettonennleistung"];
-    } else if (k === "MaStR-Nr. der Einheit") {
-  v = rec["MaStR-Nr. der Einheit"]
-   ?? rec["MaStR-Nummer der Einheit"]
-   ?? rec["MaStR-Nummer"]
-   ?? rec["MaStR-Nr."]
-   ?? rec["MaStRNummer"]
-   ?? rec["Einheit MaStR-Nummer"];
-} else if (k === "Anlagenbetreiber (Name)") {
-      v = rec["Name des Anlagenbetreibers (nur Org.)"] ?? rec["Anlagenbetreiber (Name)"];
-    } else {
-      // Standard: 1:1 Key übernehmen
-      v = rec[k];
-    }
-
-    out[col.title] = (v === undefined || v === null) ? "" : v;
+  for (const f of FIELDS) {
+    out[f.title] = rec[f.upstream] ?? "";
   }
   rows.push(out);
 }
