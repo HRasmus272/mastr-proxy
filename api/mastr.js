@@ -1,20 +1,15 @@
 // /api/mastr.js — Node.js Serverless Function (CommonJS)
-// MaStR-Proxy mit SERVERSEITIGEM Datumsfilter (Inbetriebnahmedatum der Einheit, gt/lt, dd.MM.yyyy)
-// Features: Pagination, optionaler Status-Filter, CSV/JSON-Ausgabe, Timeout & Retries
+// MaStR → Proxy mit lokalem Datumsfilter, ohne Meta-Calls.
 
-// ---------------------- Konfiguration ----------------------
 const BASE =
-  https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetErweiterteOeffentlicheEinheitStromerzeugung;
+  "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetErweiterteOeffentlicheEinheitStromerzeugung";
 const FILTER_META =
-  https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetFilterColumnsErweiterteOeffentlicheEinheitStromerzeugung;
+  "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetFilterColumnsErweiterteOeffentlicheEinheitStromerzeugung";
 
-const PER_REQUEST_TIMEOUT_MS = parseInt(process.env.MASTR_TIMEOUT_MS || "20000", 10); // 20s
-const RETRIES = parseInt(process.env.MASTR_RETRIES || "2", 10);
-const BACKOFF_BASE_MS = 600; // 600ms, 1200ms
-
-// Spaltenmapping für CSV/JSON-Normalisierung
 const COLUMNS = [
-  { key: "MaStR-Nummer der Einheit", title: "MaStRNummer" },
+  // WICHTIG: Upstream-Key = MaStRNummer (so kommt es wirklich)
+  { key: "MaStRNummer",              title: "MaStRNummer" },
+
   { key: "Anlagenbetreiber (Name)",  title: "Betreiber" },
   { key: "Energieträger",            title: "Energietraeger" },
   { key: "Bruttoleistung",           title: "Bruttoleistung" },
@@ -22,10 +17,12 @@ const COLUMNS = [
   { key: "Bundesland",               title: "Bundesland" },
   { key: "Postleitzahl",             title: "PLZ" },
   { key: "Ort",                      title: "Ort" },
+
+  // WICHTIG: Wir nennen die Ausgabespalte "Inbetriebnahme" (fix in Filter unten)
+  // und holen den Wert per Fallback aus möglichen Upstream-Feldern.
   { key: "Inbetriebnahmedatum der Einheit", title: "Inbetriebnahme" }
 ];
 
-// ---------------------- Helper ----------------------
 function toCSV(rows) {
   const header = COLUMNS.map(c => c.title).join(",");
   const esc = (v) => {
@@ -38,121 +35,33 @@ function toCSV(rows) {
   return [header, ...lines].join("\n");
 }
 
-// Parse YYYY-MM-DD → Date (UTC)
-function parseISODate(iso) {
+function toTicks(iso) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
   if (!m) return null;
-  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
-  return new Date(Date.UTC(y, mo - 1, d, 0, 0, 0, 0));
+  const [, y, mo, d] = m;
+  const ms = Date.UTC(Number(y), Number(mo) - 1, Number(d), 0, 0, 0, 0);
+  return `/Date(${ms})/`;
 }
 
-// Format dd.MM.yyyy (UTC)
-function formatDDMMYYYYUTC(d) {
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const yyyy = d.getUTCFullYear();
-  return `${dd}.${mm}.${yyyy}`;
-}
-
-// Baut die Kendo-Filterklausel für inklusives Intervall [start, end)
-// -> gt auf Vortag von start, lt auf end
-function buildMastrDateRange(startISO, endISO) {
-  const start = parseISODate(startISO);
-  const end = parseISODate(endISO);
-  if (!start || !end) return null;
-
-  const lower = new Date(start.getTime());
-  lower.setUTCDate(lower.getUTCDate() - 1); // exklusiv Vortag
-  const upper = end; // exklusiv end
-
-  const lowerStr = formatDDMMYYYYUTC(lower);
-  const upperStr = formatDDMMYYYYUTC(upper);
-
-  return `Inbetriebnahmedatum der Einheit~gt~'${lowerStr}'~and~Inbetriebnahmedatum der Einheit~lt~'${upperStr}'`;
-}
-
-// Fetch mit eigenem Timeout
-async function fetchWithTimeout(url, { signal, headers } = {}) {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort("timeout"), PER_REQUEST_TIMEOUT_MS);
-
-  if (signal) {
-    signal.addEventListener("abort", () => {
-      try { ac.abort(signal.reason || "parent_abort"); } catch {}
-    }, { once: true });
-  }
-
-  try {
-    const resp = await fetch(url, {
-      headers: {
-        "Accept": "application/json",
-        "User-Agent": "mastr-proxy-vercel",
-        "X-Requested-With": "XMLHttpRequest",
-        "Referer": https://www.marktstammdatenregister.de/,
-        ...(headers || {})
-      },
-      signal: ac.signal
-    });
-    return resp;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// Fetch JSON mit Retries bei 429/5xx/Timeout/Netzfehlern
 async function fetchJSON(url, signal) {
-  let attempt = 0;
-  while (true) {
-    try {
-      const resp = await fetchWithTimeout(url, { signal });
-      if (!resp.ok) {
-        if ([429, 500, 502, 503, 504].includes(resp.status) && attempt < RETRIES) {
-          const retryAfter = parseFloat(resp.headers.get("retry-after") || "0");
-          const wait = retryAfter > 0 ? retryAfter * 1000 : BACKOFF_BASE_MS * Math.pow(2, attempt);
-          await new Promise(r => setTimeout(r, wait));
-          attempt++;
-          continue;
-        }
-        const body = await resp.text().catch(() => "");
-        throw new Error(`Upstream HTTP ${resp.status}: ${body?.slice(0, 300)}`);
-      }
-      return await resp.json();
-    } catch (err) {
-      const transient = (err && (err.name === "AbortError" || /timeout|ECONNRESET|ENOTFOUND|EAI_AGAIN/i.test(String(err))));
-      if (transient && attempt < RETRIES) {
-        const wait = BACKOFF_BASE_MS * Math.pow(2, attempt);
-        await new Promise(r => setTimeout(r, wait));
-        attempt++;
-        continue;
-      }
-      throw err;
-    }
+  const resp = await fetch(url, {
+    headers: {
+      "Accept": "application/json",
+      "User-Agent": "mastr-proxy-vercel",
+      "X-Requested-With": "XMLHttpRequest",
+      "Referer": "https://www.marktstammdatenregister.de/"
+    },
+    signal
+  });
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => "");
+    throw new Error(`Upstream HTTP ${resp.status}: ${body?.slice(0, 300)}`);
   }
+  return resp.json();
 }
 
-// Optional: nicht-numerischen Energieträger in Code auflösen (best effort)
-async function tryResolveCarrierCode(carrierQ, signal) {
-  if (/^\d+$/.test(carrierQ)) return String(carrierQ);
-  try {
-    const meta = await fetchJSON(FILTER_META, signal);
-    const carrierFilter = Array.isArray(meta)
-      ? meta.find(f => (f.FilterName || "").toLowerCase() === "energieträger")
-      : null;
-    if (carrierFilter && Array.isArray(carrierFilter.ListObject)) {
-      const cq = (carrierQ || "").toLowerCase();
-      const exact  = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase() === cq);
-      const starts = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().startsWith(cq));
-      const incl   = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().includes(cq));
-      const chosen = exact || starts || incl || null;
-      if (chosen) return String(chosen.Value);
-    }
-  } catch {/* ignore, fallback unten */}
-  return "2495"; // Solare Strahlungsenergie
-}
-
-// ---------------------- Handler ----------------------
 module.exports = async (req, res) => {
-  // CORS & Cache
+  // --- CORS & caching ---
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cache-Control", "no-store");
 
@@ -160,64 +69,77 @@ module.exports = async (req, res) => {
     const url = new URL(req.url, `https://${req.headers.host}`);
     const startISO = url.searchParams.get("start");
     const endISO   = url.searchParams.get("end");
-    const carrierQ = (url.searchParams.get("carrier") || "2495").trim(); // bevorzugt Code
-    const statusQ  = (url.searchParams.get("status") || "").trim().toLowerCase(); // z.B. "35" oder "off"
+    const carrierQ = (url.searchParams.get("carrier") || "Solare Strahlungsenergie").trim();
     const format   = (url.searchParams.get("format") || "csv").toLowerCase();
 
-    const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "200", 10), 2000);
-    const maxPages = Math.min(parseInt(url.searchParams.get("maxpages") || "1", 10), 20);
+    const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "500", 10), 2000);
+    const maxPages = Math.min(parseInt(url.searchParams.get("maxpages") || "10", 10), 50); // etwas höher, um in den Zeitraum zu "scrollen"
 
     if (!startISO || !endISO) {
-      res.status(400).send("Missing 'start' or 'end' (YYYY-MM-DD). Example: ?start=2024-01-01&end=2024-02-01&format=csv");
+      res.status(400).send("Missing 'start' or 'end' (YYYY-MM-DD). Example: ?start=2024-01-01&end=2024-01-31&format=csv");
       return;
     }
 
-    const dateClause = buildMastrDateRange(startISO, endISO);
-    if (!dateClause) {
-      res.status(400).send("Invalid date format. Use YYYY-MM-DD for 'start' and 'end'.");
+    const startTicks = toTicks(startISO);
+    const endTicks   = toTicks(endISO);
+    if (!startTicks || !endTicks) {
+      res.status(400).send("Invalid date format. Use YYYY-MM-DD.");
       return;
     }
+    // Zahlen für den Vergleich extrahieren
+    const startMs = Number((startTicks.match(/\d+/) || [0])[0]);
+    const endMs   = Number((endTicks.match(/\d+/)   || [0])[0]);
 
-    const ac = new AbortController(); // optional: gesamter Request kann abgebrochen werden
-    const carrierCode = await tryResolveCarrierCode(carrierQ, ac.signal);
+    const ac = new AbortController();
+    const to = setTimeout(() => ac.abort("timeout"), 30000); // 30s timeout
 
-    // Filter zusammenbauen
-    const parts = [dateClause, `Energieträger~eq~'${carrierCode}'`];
-    if (statusQ && statusQ !== "off") {
-      const statusCode = /^\d+$/.test(statusQ) ? statusQ : "35"; // „In Betrieb“ als Fallback
-      parts.push(`Betriebs-Status~eq~'${statusCode}'`);
+    // Energieträger → Code ermitteln
+    const meta = await fetchJSON(FILTER_META, ac.signal);
+    const carrierFilter = Array.isArray(meta)
+      ? meta.find(f => (f.FilterName || "").toLowerCase() === "energieträger")
+      : null;
+
+    let carrierCode = null;
+    if (carrierFilter && Array.isArray(carrierFilter.ListObject)) {
+      if (/^\d+$/.test(carrierQ)) {
+        const hit = carrierFilter.ListObject.find(x => String(x.Value) === carrierQ);
+        if (hit) carrierCode = String(hit.Value);
+      }
+      if (!carrierCode) {
+        const cq = carrierQ.toLowerCase();
+        const exact  = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase() === cq);
+        const starts = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().startsWith(cq));
+        const incl   = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().includes(cq));
+        const chosen = exact || starts || incl || null;
+        if (chosen) carrierCode = String(chosen.Value);
+      }
     }
-    const filterRaw = parts.join("~and~");
-    const filterEncoded = encodeURIComponent(filterRaw);
+    if (!carrierCode) carrierCode = "2495"; // Fallback: Solare Strahlungsenergie
+
+    const filterRaw = `Energieträger~eq~'${carrierCode}'`;
 
     let page = 1;
     const rows = [];
 
     while (page <= maxPages) {
+      const skip = (page - 1) * pageSize;
+      const take = pageSize;
+
       const q =
         `${BASE}?group=&sort=&aggregate=` +
-        `&forExport=true` +
         `&page=${page}&pageSize=${pageSize}` +
-        `&filter=${filterEncoded}`;
+        `&skip=${skip}&take=${take}` +
+        `&filter=${encodeURIComponent(filterRaw)}`;
 
       const j = await fetchJSON(q, ac.signal);
-      if (j && j.Error) {
-        res.status(502).send(`Upstream reported Error (Type=${j.Type || "?"}): ${j.Message || "no message"}`);
-        return;
-      }
-
-      // Das Grid liefert meist { Items: [...] }
-      const data =
-        Array.isArray(j?.Items) ? j.Items :
-        Array.isArray(j?.Data)  ? j.Data  :
-        Array.isArray(j)        ? j       : [];
-
-      if (!data.length) break;
+      const data = Array.isArray(j) ? j : (j.Data || j.data || []);
+      if (!Array.isArray(data) || data.length === 0) break;
 
       for (const rec of data) {
         const out = {};
         for (const col of COLUMNS) {
-          if (col.key === "Inbetriebnahmedatum der Einheit") {
+          if (col.title === "Inbetriebnahme") {
+            // Fallback: mehrere mögliche Upstream-Felder unterstützen
             out[col.title] =
               rec["Inbetriebnahmedatum der Einheit"] ??
               rec["InbetriebnahmeDatum"] ??
@@ -227,11 +149,20 @@ module.exports = async (req, res) => {
             out[col.title] = rec[col.key] ?? "";
           }
         }
-        rows.push(out);
+
+        // Lokale Datumsfilterung: nur innerhalb [start, end)
+        const dt = out["Inbetriebnahme"]; // kommt als "/Date(…)/"
+        const m  = dt && dt.match(/\d+/);
+        const ms = m ? Number(m[0]) : NaN;
+        if (!Number.isNaN(ms) && ms >= startMs && ms < endMs) {
+          rows.push(out);
+        }
       }
 
       page++;
     }
+
+    clearTimeout(to);
 
     if (format === "json") {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
