@@ -268,8 +268,13 @@ for (const rec of data) {
     } else if (k === "Nettonennleistung") {
       v = rec["Nettonennleistung der Einheit"] ?? rec["Nettonennleistung"];
     } else if (k === "MaStR-Nr. der Einheit") {
-      v = rec["MaStR-Nr. der Einheit"] ?? rec["MaStR-Nr. der Einheit"];
-    } else if (k === "Anlagenbetreiber (Name)") {
+  v = rec["MaStR-Nr. der Einheit"]
+   ?? rec["MaStR-Nummer der Einheit"]
+   ?? rec["MaStR-Nummer"]
+   ?? rec["MaStR-Nr."]
+   ?? rec["MaStRNummer"]
+   ?? rec["Einheit MaStR-Nummer"];
+} else if (k === "Anlagenbetreiber (Name)") {
       v = rec["Name des Anlagenbetreibers (nur Org.)"] ?? rec["Anlagenbetreiber (Name)"];
     } else {
       // Standard: 1:1 Key übernehmen
