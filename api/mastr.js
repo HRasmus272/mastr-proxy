@@ -15,7 +15,7 @@ const BACKOFF_BASE_MS = 600; // 600ms, 1200ms
 // Spaltenmapping für CSV/JSON-Normalisierung
 const COLUMNS = [
   // schon vorhanden (lassen wir drin):
-  { key: "MaStR-Nummer der Einheit", title: "MaStR-Nr. der Einheit" },
+  { key: "MaStR-Nr. der Einheit", title: "MaStR-Nr. der Einheit" },
   { key: "Anlagenbetreiber (Name)",  title: "Name des Anlagenbetreibers (nur Org.)" }, // siehe Wunschliste
   { key: "Energieträger",            title: "Energieträger" },
   { key: "Bruttoleistung",           title: "Bruttoleistung der Einheit" }, // Fallback-Logik unten
@@ -267,8 +267,8 @@ for (const rec of data) {
       v = rec["Bruttoleistung der Einheit"] ?? rec["Bruttoleistung"];
     } else if (k === "Nettonennleistung") {
       v = rec["Nettonennleistung der Einheit"] ?? rec["Nettonennleistung"];
-    } else if (k === "MaStR-Nummer der Einheit") {
-      v = rec["MaStR-Nummer der Einheit"] ?? rec["MaStR-Nummer"];
+    } else if (k === "MaStR-Nr. der Einheit") {
+      v = rec["MaStR-Nr. der Einheit"] ?? rec["MaStR-Nr. der Einheit"];
     } else if (k === "Anlagenbetreiber (Name)") {
       v = rec["Name des Anlagenbetreibers (nur Org.)"] ?? rec["Anlagenbetreiber (Name)"];
     } else {
