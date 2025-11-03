@@ -1,11 +1,18 @@
-// /api/mastr.js  — Node.js Serverless Function (CommonJS), kurz laufend
-// Lädt MaStR-Daten paginiert, jetzt MIT serverseitigem Datumsfilter (Inbetriebnahmedatum der Einheit, gt/lt, dd.MM.yyyy).
+// /api/mastr.js — Node.js Serverless Function (CommonJS)
+// MaStR-Proxy mit SERVERSEITIGEM Datumsfilter (Inbetriebnahmedatum der Einheit, gt/lt, dd.MM.yyyy)
+// Features: Pagination, optionaler Status-Filter, CSV/JSON-Ausgabe, Timeout & Retries
 
+// ---------------------- Konfiguration ----------------------
 const BASE =
   "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetErweiterteOeffentlicheEinheitStromerzeugung";
 const FILTER_META =
   "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetFilterColumnsErweiterteOeffentlicheEinheitStromerzeugung";
 
+const PER_REQUEST_TIMEOUT_MS = parseInt(process.env.MASTR_TIMEOUT_MS || "20000", 10); // 20s
+const RETRIES = parseInt(process.env.MASTR_RETRIES || "2", 10);
+const BACKOFF_BASE_MS = 600; // 600ms, 1200ms
+
+// Spaltenmapping für CSV/JSON-Normalisierung
 const COLUMNS = [
   { key: "MaStR-Nummer der Einheit", title: "MaStRNummer" },
   { key: "Anlagenbetreiber (Name)",  title: "Betreiber" },
@@ -18,7 +25,7 @@ const COLUMNS = [
   { key: "Inbetriebnahmedatum der Einheit", title: "Inbetriebnahme" }
 ];
 
-// ---------- Helpers ----------
+// ---------------------- Helper ----------------------
 function toCSV(rows) {
   const header = COLUMNS.map(c => c.title).join(",");
   const esc = (v) => {
@@ -31,16 +38,15 @@ function toCSV(rows) {
   return [header, ...lines].join("\n");
 }
 
-// Robust: parse YYYY-MM-DD (ohne Zeitzonen-Stress), gibt UTC-Date zurück
+// Parse YYYY-MM-DD → Date (UTC)
 function parseISODate(iso) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
   if (!m) return null;
-  const [, y, mo, d] = m.map(Number);
-  // Nutze UTC, um TZ-Drift zu vermeiden
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
   return new Date(Date.UTC(y, mo - 1, d, 0, 0, 0, 0));
 }
 
-// dd.MM.yyyy aus UTC-Date
+// Format dd.MM.yyyy (UTC)
 function formatDDMMYYYYUTC(d) {
   const dd = String(d.getUTCDate()).padStart(2, "0");
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
@@ -48,19 +54,16 @@ function formatDDMMYYYYUTC(d) {
   return `${dd}.${mm}.${yyyy}`;
 }
 
-// Baut die Kendo-Filterklausel für ein inklusives Intervall [start, end)
-// Wichtig: gt (strict) auf den VORTAG von start; lt (strict) auf end
+// Baut die Kendo-Filterklausel für inklusives Intervall [start, end)
+// -> gt auf Vortag von start, lt auf end
 function buildMastrDateRange(startISO, endISO) {
   const start = parseISODate(startISO);
   const end = parseISODate(endISO);
   if (!start || !end) return null;
 
-  // untere exklusive Grenze = Tag vor start
   const lower = new Date(start.getTime());
-  lower.setUTCDate(lower.getUTCDate() - 1);
-
-  // obere exklusive Grenze = end (z. B. 1. des Folgemonats)
-  const upper = end;
+  lower.setUTCDate(lower.getUTCDate() - 1); // exklusiv Vortag
+  const upper = end; // exklusiv end
 
   const lowerStr = formatDDMMYYYYUTC(lower);
   const upperStr = formatDDMMYYYYUTC(upper);
@@ -68,27 +71,68 @@ function buildMastrDateRange(startISO, endISO) {
   return `Inbetriebnahmedatum der Einheit~gt~'${lowerStr}'~and~Inbetriebnahmedatum der Einheit~lt~'${upperStr}'`;
 }
 
-async function fetchJSON(url, signal) {
-  const resp = await fetch(url, {
-    headers: {
-      "Accept": "application/json",
-      "User-Agent": "mastr-proxy-vercel",
-      "X-Requested-With": "XMLHttpRequest",
-      "Referer": "https://www.marktstammdatenregister.de/"
-    },
-    signal
-  });
-  if (!resp.ok) {
-    const body = await resp.text().catch(() => "");
-    throw new Error(`Upstream HTTP ${resp.status}: ${body?.slice(0, 300)}`);
+// Fetch mit eigenem Timeout
+async function fetchWithTimeout(url, { signal, headers } = {}) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort("timeout"), PER_REQUEST_TIMEOUT_MS);
+
+  if (signal) {
+    signal.addEventListener("abort", () => {
+      try { ac.abort(signal.reason || "parent_abort"); } catch {}
+    }, { once: true });
   }
-  return resp.json();
+
+  try {
+    const resp = await fetch(url, {
+      headers: {
+        "Accept": "application/json",
+        "User-Agent": "mastr-proxy-vercel",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": "https://www.marktstammdatenregister.de/",
+        ...(headers || {})
+      },
+      signal: ac.signal
+    });
+    return resp;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
-// Versucht optional, einen nicht-numerischen carrier-Begriff in einen Code aufzulösen.
-// Blockiert nie lange: kurzer Timeout, fällt im Zweifel auf 2495 zurück.
+// Fetch JSON mit Retries bei 429/5xx/Timeout/Netzfehlern
+async function fetchJSON(url, signal) {
+  let attempt = 0;
+  while (true) {
+    try {
+      const resp = await fetchWithTimeout(url, { signal });
+      if (!resp.ok) {
+        if ([429, 500, 502, 503, 504].includes(resp.status) && attempt < RETRIES) {
+          const retryAfter = parseFloat(resp.headers.get("retry-after") || "0");
+          const wait = retryAfter > 0 ? retryAfter * 1000 : BACKOFF_BASE_MS * Math.pow(2, attempt);
+          await new Promise(r => setTimeout(r, wait));
+          attempt++;
+          continue;
+        }
+        const body = await resp.text().catch(() => "");
+        throw new Error(`Upstream HTTP ${resp.status}: ${body?.slice(0, 300)}`);
+      }
+      return await resp.json();
+    } catch (err) {
+      const transient = (err && (err.name === "AbortError" || /timeout|ECONNRESET|ENOTFOUND|EAI_AGAIN/i.test(String(err))));
+      if (transient && attempt < RETRIES) {
+        const wait = BACKOFF_BASE_MS * Math.pow(2, attempt);
+        await new Promise(r => setTimeout(r, wait));
+        attempt++;
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+// Optional: nicht-numerischen Energieträger in Code auflösen (best effort)
 async function tryResolveCarrierCode(carrierQ, signal) {
-  if (/^\d+$/.test(carrierQ)) return String(carrierQ); // bereits Code
+  if (/^\d+$/.test(carrierQ)) return String(carrierQ);
   try {
     const meta = await fetchJSON(FILTER_META, signal);
     const carrierFilter = Array.isArray(meta)
@@ -102,15 +146,13 @@ async function tryResolveCarrierCode(carrierQ, signal) {
       const chosen = exact || starts || incl || null;
       if (chosen) return String(chosen.Value);
     }
-  } catch {
-    // still fallback
-  }
+  } catch {/* ignore, fallback unten */}
   return "2495"; // Solare Strahlungsenergie
 }
 
-// ---------- Handler ----------
+// ---------------------- Handler ----------------------
 module.exports = async (req, res) => {
-  // --- CORS & caching ---
+  // CORS & Cache
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cache-Control", "no-store");
 
@@ -122,7 +164,7 @@ module.exports = async (req, res) => {
     const statusQ  = (url.searchParams.get("status") || "").trim().toLowerCase(); // z.B. "35" oder "off"
     const format   = (url.searchParams.get("format") || "csv").toLowerCase();
 
-    const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "500", 10), 2000);
+    const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "200", 10), 2000);
     const maxPages = Math.min(parseInt(url.searchParams.get("maxpages") || "1", 10), 20);
 
     if (!startISO || !endISO) {
@@ -136,20 +178,17 @@ module.exports = async (req, res) => {
       return;
     }
 
-    // kurzer Timeout (8s) pro Upstream-Call
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort("timeout"), 8000);
-
+    const ac = new AbortController(); // optional: gesamter Request kann abgebrochen werden
     const carrierCode = await tryResolveCarrierCode(carrierQ, ac.signal);
 
     // Filter zusammenbauen
     const parts = [dateClause, `Energieträger~eq~'${carrierCode}'`];
     if (statusQ && statusQ !== "off") {
-      // akzeptiere z.B. "35" oder "in betrieb" (nur Code ist sicher)
-      const statusCode = /^\d+$/.test(statusQ) ? statusQ : "35";
+      const statusCode = /^\d+$/.test(statusQ) ? statusQ : "35"; // „In Betrieb“ als Fallback
       parts.push(`Betriebs-Status~eq~'${statusCode}'`);
     }
     const filterRaw = parts.join("~and~");
+    const filterEncoded = encodeURIComponent(filterRaw);
 
     let page = 1;
     const rows = [];
@@ -157,25 +196,23 @@ module.exports = async (req, res) => {
     while (page <= maxPages) {
       const q =
         `${BASE}?group=&sort=&aggregate=` +
-        `&forExport=true` +          // wichtig: stabiler Code-Path
+        `&forExport=true` +
         `&page=${page}&pageSize=${pageSize}` +
-        `&filter=${encodeURIComponent(filterRaw)}`;
+        `&filter=${filterEncoded}`;
 
       const j = await fetchJSON(q, ac.signal);
-
       if (j && j.Error) {
-        clearTimeout(timer);
         res.status(502).send(`Upstream reported Error (Type=${j.Type || "?"}): ${j.Message || "no message"}`);
         return;
       }
 
-      // Der Endpoint liefert typischerweise { Items: [...] } — fallback auf Data für Sicherheit
-      const data = Array.isArray(j?.Items) ? j.Items
-                 : Array.isArray(j?.Data)  ? j.Data
-                 : Array.isArray(j)        ? j
-                 : [];
+      // Das Grid liefert meist { Items: [...] }
+      const data =
+        Array.isArray(j?.Items) ? j.Items :
+        Array.isArray(j?.Data)  ? j.Data  :
+        Array.isArray(j)        ? j       : [];
 
-      if (!Array.isArray(data) || data.length === 0) break;
+      if (!data.length) break;
 
       for (const rec of data) {
         const out = {};
@@ -195,8 +232,6 @@ module.exports = async (req, res) => {
 
       page++;
     }
-
-    clearTimeout(timer);
 
     if (format === "json") {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
