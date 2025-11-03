@@ -116,6 +116,8 @@ module.exports = async (req, res) => {
 
     const startTicks = toTicks(startISO);
     const endTicks   = toTicks(endISO);
+    const startMs = Number((startTicks.match(/\d+/) || [0])[0]);
+    const endMs   = Number((endTicks.match(/\d+/)   || [0])[0]);    
     if (!startTicks || !endTicks) {
       res.status(400).send("Invalid date format. Use YYYY-MM-DD.");
       return;
@@ -180,8 +182,15 @@ module.exports = async (req, res) => {
             out[col.title] = rec[col.key] ?? "";
           }
         }
-        // (hier ggf. lokale Datumsfilterung einsetzen – aktuell nicht aktiv)
-        rows.push(out);
+        // lokale Datumsfilterung (inklusive Untergrenze, exklusive Obergrenze)
+const dt = out["Inbetriebnahmedatum der Einheit"]; // kommt als "/Date(…)/"
+const m  = dt && dt.match(/\d+/);
+const ms = m ? Number(m[0]) : NaN;
+
+if (!Number.isNaN(ms) && ms >= startMs && ms < endMs) {
+  rows.push(out);
+}
+// sonst: außerhalb des Fensters -> weglassen
       }
 
       page++;
