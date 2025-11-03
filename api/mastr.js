@@ -83,7 +83,7 @@ module.exports = async (req, res) => {
     }
 
     const ac = new AbortController();
-    const to = setTimeout(() => ac.abort("timeout"), 8000);
+    const to = setTimeout(() => ac.abort("timeout"), 30000); // 30s timeout
 
     const meta = await fetchJSON(FILTER_META, ac.signal);
     const carrierFilter = Array.isArray(meta)
@@ -108,6 +108,7 @@ module.exports = async (req, res) => {
     if (!carrierCode) carrierCode = "2495"; // Fallback: Solare Strahlungsenergie
 
     const filterRaw = `Energieträger~eq~'${carrierCode}'`;
+
     let page = 1;
     const rows = [];
 
@@ -138,13 +139,7 @@ module.exports = async (req, res) => {
             out[col.title] = rec[col.key] ?? "";
           }
         }
-
-        // lokales Datumsfenster
-        const dtStr = out["Inbetriebnahme"];
-        const ms = dtStr && /Date\((\d+)\)/.test(dtStr) ? parseInt(RegExp.$1, 10) : null;
-        if (ms && ms >= parseInt(startTicks.match(/\d+/)[0]) && ms < parseInt(endTicks.match(/\d+/)[0])) {
-          rows.push(out);
-        }
+        rows.push(out);
       }
 
       page++;
