@@ -22,10 +22,19 @@ const COLUMNS = [
   { key: "Nettonennleistung",        title: "Nettonennleistung" },
   { key: "InbetriebnahmeDatum",      title: "Inbetriebnahme" },
   { key: "InbetriebnahmeDatumamaktuellenStandort",      title: "InbetriebnahmeDatumamaktuellenStandort" },
+  { key: "EinheitRegistrierungsdatum",      title: "Registrierungsdatum der Einheit" },
   { key: "Bundesland",               title: "Bundesland" },
   { key: "Plz",                      title: "PLZ" },
   { key: "Ort",                      title: "Ort" },
-  { key: "AnlagenbetreiberName",     title: "Betreiber" }
+  { key: "Strasse",                  title: "Straße" },
+  { key: "Hausnummer",               title: "Hausnummer" },
+  { key: "Gemarkung",                title: "Gemarkung" },
+  { key: "Flurstueck",               title: "Flurstück" },
+  { key: "Gemeindeschluessel",       title: "Gemeindeschluessel" },
+  { key: "Gemeinde",                 title: "Gemeinde" },
+  { key: "Landkreis",                title: "Landkreis" },
+  { key: "Breitengrad",              title: "Koordinate: Breitengrad (WGS84)" },
+  { key: "Flurstueck",               title: "Betreiber" }
 ];
 
 // ---------------------- Helper ----------------------
