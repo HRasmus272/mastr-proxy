@@ -170,7 +170,7 @@ module.exports = async (req, res) => {
       for (const rec of data) {
         const out = {};
         for (const col of COLUMNS) {
-          if (col.key === "Inbetriebnahmedatum der Einheit") {
+          if (col.title === "Inbetriebnahmedatum der Einheit") {
             // minimaler Fallback; wenn nicht gewünscht, ersetze die 3 Zeilen durch: const val = rec[col.key] ?? "";
             const val =
               rec["Inbetriebnahmedatum der Einheit"] ??
