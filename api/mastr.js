@@ -15,7 +15,6 @@ const BACKOFF_BASE_MS = 600; // 600ms, 1200ms
 
 // ---------------------- Spaltenmapping ----------------------
 // key = exakter JSON-Feldname der API, title = Ausgabespaltenname
-// HINWEIS: "InbetriebnahmeDatumAmAktuellenStandort" ist die häufigste Schreibweise (CamelCase).
 // Falls abweichend, mit &debug=keys exakt prüfen und hier anpassen.
 const COLUMNS = [
   { key: "MaStRNummer",                        title: "MaStR-Nr. der Einheit" },
@@ -25,10 +24,7 @@ const COLUMNS = [
   { key: "Bruttoleistung",                     title: "Bruttoleistung" },
   { key: "Nettonennleistung",                  title: "Nettonennleistung" },
   { key: "InbetriebnahmeDatum",                title: "Inbetriebnahme" },
-
-  // Vermutete Schreibweise in CamelCase – mit debug=keys verifizieren:
   { key: "InbetriebnahmeDatumAmAktuellenOrt", title: "Inbetriebnahmedatum der Einheit am aktuellen Standort" },
-
   { key: "EinheitRegistrierungsdatum",         title: "Registrierungsdatum der Einheit" },
   { key: "Bundesland",                         title: "Bundesland" },
   { key: "Plz",                                title: "PLZ" },
@@ -43,19 +39,32 @@ const COLUMNS = [
   { key: "Breitengrad",                        title: "Koordinate: Breitengrad (WGS84)" },
   { key: "Laengengrad",                        title: "Koordinate: Längengrad (WGS84)" },
   { key: "TechnologieStromerzeugung",          title: "Technologie der Stromerzeugung" },
-
-  // <<<<<< Das Feld, das du suchst — exakten Key mit &debug=keys ermitteln und HIER einsetzen
   { key: "ArtDerSolaranlageBezeichnung",       title: "Art der Solaranlage" },
   { key: "AnzahlSolarModule",                  title: "Anzahl der Solar-Module" },
   { key: "HauptausrichtungSolarModuleBezeichnung",        title: "Hauptausrichtung der Solar-Module" },
-  { key: "HauptneigungswinkelSolarmodule",       title: "Hauptneigungswinkel der Solar-Module" },
-  { key: "SolarparkName",                        title: "Name des Solarparks" },
-  { key: "SpeicherEinheitMastrNummer",        title: "MaStR-Nr. der Speichereinheit" },
-  { key: "StromspeichertechnologieBezeichnung",       title: "Speichertechnologie" },
-  { key: "NutzbareSpeicherkapazitaet",                        title: "Nutzbare Speicherkapazitaet in kWh" },
-  { key: "DatumLetzteAktualisierung",        title: "Letzte Aktualisierung" },
-
-  // BUGFIX: In deiner letzten Version war "Flurstueck" fälschlich mit title "Betreiber" dupliziert – entfernt.
+  { key: "HauptneigungswinkelSolarmodule",     title: "Hauptneigungswinkel der Solar-Module" },
+  { key: "SolarparkName",                      title: "Name des Solarparks" },
+  { key: "SpeicherEinheitMastrNummer",         title: "MaStR-Nr. der Speichereinheit" },
+  { key: "StromspeichertechnologieBezeichnung",title: "Speichertechnologie" },
+  { key: "NutzbareSpeicherkapazitaet",         title: "Nutzbare Speicherkapazitaet in kWh" },
+  { key: "DatumLetzteAktualisierung",          title: "Letzte Aktualisierung" },
+  { key: "EndgueltigeStilllegungDatum",        title: "Datum der endgültigen Stilllegung" },
+  { key: "GeplantesInbetriebsnahmeDatum",      title: "Datum der geplanten Inbetriebnahme" },
+  { key: "AnlagenbetreiberName",               title: "Name des Anlagenbetreibers (nur Org.)" },
+  { key: "AnlagenbetreiberMaStRNummer",        title: "MaStR-Nr. des Anlagenbetreibers" },
+  { key: "VollTeilEinspeisungBezeichnung",     title: "Volleinspeisung oder Teileinspeisung" },
+  { key: "GenehmigungsMastrNummer",            title: "MaStR-Nr. der Genehmigung" },
+  { key: "NetzbetreiberNamen",                 title: "Name des Anschluss-Netzbetreibers" },
+  { key: "NetzbetreiberMaStRNummer",           title: "MaStR-Nr. des Anschluss-Netzbetreibers" },
+  { key: "IsNBPruefungAbgeschlossen",          title: "Netzbetreiberprüfung" },
+  { key: "SpannungsebenenNamen",               title: "Spannungsebene" },
+  { key: "LokationMastrNr",                    title: "MaStR-Nr. der Lokation" },
+  { key: "EegAnlageMastrNummer",               title: "MaStR-Nr. der EEG-Anlage" },
+  { key: "EegAnlagenschluessel",               title: "EEG-Anlagenschlüssel" },
+  { key: "EegInbetriebnahmeDatum",             title: "Inbetriebnahmedatum der EEG-Anlage" },
+  { key: "EegInstallierteLeistung",            title: "Installierte Leistung der EEG-Anlage" },
+  
+ 
 ];
 
 // ---------------------- Helper ----------------------
