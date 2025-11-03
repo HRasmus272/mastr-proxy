@@ -10,9 +10,9 @@ const FILTER_META =
 // key = Upstream-Name (so liefert MaStR), title = Spaltenname in der Ausgabe
 const COLUMNS = [
   { key: "MaStRNummer",                                      title: "MaStR-Nr. der Einheit" },
-  { key: "Anzeige-Name der Einheit",                         title: "Anzeige-Name der Einheit" },
-  { key: "Betriebs-Status",                                  title: "Betriebs-Status" },
-  { key: "Energieträger",                                    title: "Energieträger" },
+  { key: "EinheitName",                                      title: "Anzeige-Name der Einheit" },
+  { key: "BetriebsStatusName",                               title: "Betriebs-Status" },
+  { key: "EnergietraegerName",                               title: "Energieträger" },
   { key: "Bruttoleistung der Einheit",                       title: "Bruttoleistung der Einheit" },
   { key: "Nettonennleistung der Einheit",                    title: "Nettonennleistung der Einheit" },
   { key: "Inbetriebnahmedatum der Einheit",                  title: "Inbetriebnahmedatum der Einheit" },
