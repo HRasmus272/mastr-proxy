@@ -14,7 +14,7 @@ const BACKOFF_BASE_MS = 600; // 600ms, 1200ms
 
 // Spaltenmapping für CSV/JSON-Normalisierung
 const COLUMNS = [
-  { key: "MaStRNummer",              title: "MaStRNummer" },
+  { key: "MaStRNummer",              title: "MaStR-Nr. der Einheit" },
   { key: "AnlagenbetreiberName",     title: "Betreiber" },
   { key: "EnergietraegerName",       title: "Energietraeger" },
   { key: "Bruttoleistung",           title: "Bruttoleistung" },
