@@ -1,6 +1,7 @@
 // /api/mastr.js — Node.js Serverless Function (CommonJS)
 // MaStR-Proxy mit SERVERSEITIGEM Datumsfilter (Inbetriebnahmedatum der Einheit, gt/lt, dd.MM.yyyy)
 // Features: Pagination, optionaler Status-Filter, CSV/JSON-Ausgabe, Timeout & Retries
+// + Debug-Modi: &debug=keys | &debug=sample | &debug=fields
 
 // ---------------------- Konfiguration ----------------------
 const BASE =
@@ -12,34 +13,44 @@ const PER_REQUEST_TIMEOUT_MS = parseInt(process.env.MASTR_TIMEOUT_MS || "20000",
 const RETRIES = parseInt(process.env.MASTR_RETRIES || "2", 10);
 const BACKOFF_BASE_MS = 600; // 600ms, 1200ms
 
-// Spaltenmapping für CSV/JSON-Normalisierung
+// ---------------------- Spaltenmapping ----------------------
+// key = exakter JSON-Feldname der API, title = Ausgabespaltenname
+// HINWEIS: "InbetriebnahmeDatumAmAktuellenStandort" ist die häufigste Schreibweise (CamelCase).
+// Falls abweichend, mit &debug=keys exakt prüfen und hier anpassen.
 const COLUMNS = [
-  { key: "MaStRNummer",              title: "MaStR-Nr. der Einheit" },
-  { key: "EinheitName",              title: "Anzeige-Name der Einheit" },
-  { key: "BetriebsStatusName",       title: "Betriebs-Status" },
-  { key: "EnergietraegerName",       title: "Energietraeger" },
-  { key: "Bruttoleistung",           title: "Bruttoleistung" },
-  { key: "Nettonennleistung",        title: "Nettonennleistung" },
-  { key: "InbetriebnahmeDatum",      title: "Inbetriebnahme" },
-  { key: "InbetriebnahmeDatumamaktuellenStandort",      title: "InbetriebnahmeDatumamaktuellenStandort" },
-  { key: "EinheitRegistrierungsdatum",      title: "Registrierungsdatum der Einheit" },
-  { key: "Bundesland",               title: "Bundesland" },
-  { key: "Plz",                      title: "PLZ" },
-  { key: "Ort",                      title: "Ort" },
-  { key: "Strasse",                  title: "Straße" },
-  { key: "Hausnummer",               title: "Hausnummer" },
-  { key: "Gemarkung",                title: "Gemarkung" },
-  { key: "Flurstueck",               title: "Flurstück" },
-  { key: "Gemeindeschluessel",       title: "Gemeindeschluessel" },
-  { key: "Gemeinde",                 title: "Gemeinde" },
-  { key: "Landkreis",                title: "Landkreis" },
-  { key: "Breitengrad",              title: "Koordinate: Breitengrad (WGS84)" },
-  { key: "Laengengrad",               title: "Koordinate: Längengrad (WGS84)" },
-  { key: "TechnologieStromerzeugung",       title: "Technologie der Stromerzeugung" },
-  { key: "SolarArt",                 title: "Art der Solaranlage" },
-  { key: "AnzahlSolarModule",                title: "Anzahl der Solar-Module" },
-  { key: "HauptausrichtungSolarModule",              title: "Hauptausrichtung der Solar-Module" },
-  { key: "Flurstueck",               title: "Betreiber" }
+  { key: "MaStRNummer",                        title: "MaStR-Nr. der Einheit" },
+  { key: "EinheitName",                        title: "Anzeige-Name der Einheit" },
+  { key: "BetriebsStatusName",                 title: "Betriebs-Status" },
+  { key: "EnergietraegerName",                 title: "Energietraeger" },
+  { key: "Bruttoleistung",                     title: "Bruttoleistung" },
+  { key: "Nettonennleistung",                  title: "Nettonennleistung" },
+  { key: "InbetriebnahmeDatum",                title: "Inbetriebnahme" },
+
+  // Vermutete Schreibweise in CamelCase – mit debug=keys verifizieren:
+  { key: "InbetriebnahmeDatumAmAktuellenStandort", title: "InbetriebnahmeDatumamaktuellenStandort" },
+
+  { key: "EinheitRegistrierungsdatum",         title: "Registrierungsdatum der Einheit" },
+  { key: "Bundesland",                         title: "Bundesland" },
+  { key: "Plz",                                title: "PLZ" },
+  { key: "Ort",                                title: "Ort" },
+  { key: "Strasse",                            title: "Straße" },
+  { key: "Hausnummer",                         title: "Hausnummer" },
+  { key: "Gemarkung",                          title: "Gemarkung" },
+  { key: "Flurstueck",                         title: "Flurstück" },
+  { key: "Gemeindeschluessel",                 title: "Gemeindeschluessel" },
+  { key: "Gemeinde",                           title: "Gemeinde" },
+  { key: "Landkreis",                          title: "Landkreis" },
+  { key: "Breitengrad",                        title: "Koordinate: Breitengrad (WGS84)" },
+  { key: "Laengengrad",                        title: "Koordinate: Längengrad (WGS84)" },
+  { key: "TechnologieStromerzeugung",          title: "Technologie der Stromerzeugung" },
+
+  // <<<<<< Das Feld, das du suchst — exakten Key mit &debug=keys ermitteln und HIER einsetzen
+  { key: "SolarArt",                           title: "Art der Solaranlage" },
+
+  { key: "AnzahlSolarModule",                  title: "Anzahl der Solar-Module" },
+  { key: "HauptausrichtungSolarModule",        title: "Hauptausrichtung der Solar-Module" },
+
+  // BUGFIX: In deiner letzten Version war "Flurstueck" fälschlich mit title "Betreiber" dupliziert – entfernt.
 ];
 
 // ---------------------- Helper ----------------------
@@ -180,6 +191,7 @@ module.exports = async (req, res) => {
     const carrierQ = (url.searchParams.get("carrier") || "2495").trim(); // bevorzugt Code
     const statusQ  = (url.searchParams.get("status") || "").trim().toLowerCase(); // z.B. "35" oder "off"
     const format   = (url.searchParams.get("format") || "csv").toLowerCase();
+    const debugQ   = (url.searchParams.get("debug") || "").toLowerCase(); // "keys" | "sample" | "fields"
 
     const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "200", 10), 2000);
     const maxPages = Math.min(parseInt(url.searchParams.get("maxpages") || "1", 10), 20);
@@ -195,7 +207,7 @@ module.exports = async (req, res) => {
       return;
     }
 
-    const ac = new AbortController(); // optional: gesamter Request kann abgebrochen werden
+    const ac = new AbortController();
     const carrierCode = await tryResolveCarrierCode(carrierQ, ac.signal);
 
     // Filter zusammenbauen
@@ -223,7 +235,52 @@ module.exports = async (req, res) => {
         return;
       }
 
-      // Das Grid liefert meist { Items: [...] }
+      // --- DEBUG: früh rausgeben, bevor wir normal parsen ---
+      if (debugQ === "sample" || debugQ === "keys" || debugQ === "fields") {
+        const items =
+          Array.isArray(j?.Items) ? j.Items :
+          Array.isArray(j?.Data)  ? j.Data  :
+          Array.isArray(j)        ? j       : [];
+
+        if (debugQ === "sample") {
+          res.setHeader("Content-Type", "application/json; charset=utf-8");
+          res.status(200).send(JSON.stringify(items[0] || {}, null, 2));
+          return;
+        }
+
+        if (debugQ === "keys") {
+          const sample = items.slice(0, 200);
+          const counts = {};
+          for (const rec of sample) {
+            for (const k of Object.keys(rec || {})) {
+              if (!counts[k]) counts[k] = 0;
+              if (rec[k] !== null && rec[k] !== "") counts[k]++;
+            }
+          }
+          const keys = Object.entries(counts)
+            .sort((a,b) => b[1]-a[1])
+            .map(([key,count]) => ({ key, nonNullInSample: count }));
+          res.setHeader("Content-Type", "application/json; charset=utf-8");
+          res.status(200).send(JSON.stringify({ keys, sampleSize: sample.length }, null, 2));
+          return;
+        }
+
+        if (debugQ === "fields") {
+          const sample = items[0] || {};
+          const report = COLUMNS.map(c => ({
+            title: c.title,
+            key: c.key,
+            presentInSample: Object.prototype.hasOwnProperty.call(sample, c.key),
+            sampleValue: sample[c.key] ?? null
+          }));
+          res.setHeader("Content-Type", "application/json; charset=utf-8");
+          res.status(200).send(JSON.stringify({ report, hint: "Passe 'key' an, falls presentInSample=false. Für neue Keys: erst &debug=keys nutzen." }, null, 2));
+          return;
+        }
+      }
+      // --- Ende Debug-Zweig ---
+
+      // Normale Verarbeitung
       const data =
         Array.isArray(j?.Items) ? j.Items :
         Array.isArray(j?.Data)  ? j.Data  :
@@ -235,6 +292,7 @@ module.exports = async (req, res) => {
         const out = {};
         for (const col of COLUMNS) {
           if (col.key === "InbetriebnahmeDatum") {
+            // robustes Datum (manche Endpunkte liefern Variante)
             out[col.title] =
               rec["Inbetriebnahmedatum der Einheit"] ??
               rec["InbetriebnahmeDatum"] ??
@@ -250,6 +308,7 @@ module.exports = async (req, res) => {
       page++;
     }
 
+    // Ausgabe
     if (format === "json") {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
       res.status(200).send(JSON.stringify(rows));
