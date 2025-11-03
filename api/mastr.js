@@ -1,205 +1,62 @@
 // /api/mastr.js — Node.js Serverless Function (CommonJS)
-// MaStR-Proxy mit SERVERSEITIGEM Datumsfilter (Inbetriebnahmedatum der Einheit, gt/lt, dd.MM.yyyy)
-// Features: Pagination, optionaler Status-Filter, CSV/JSON-Ausgabe, Timeout & Retries
+// MaStR → Proxy mit lokalem Datumsfilter, ohne Meta-Calls.
 
-// ---------------------- Konfiguration ----------------------
 const BASE =
   "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetErweiterteOeffentlicheEinheitStromerzeugung";
 const FILTER_META =
   "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetFilterColumnsErweiterteOeffentlicheEinheitStromerzeugung";
 
-const PER_REQUEST_TIMEOUT_MS = parseInt(process.env.MASTR_TIMEOUT_MS || "20000", 10); // 20s
-const RETRIES = parseInt(process.env.MASTR_RETRIES || "2", 10);
-const BACKOFF_BASE_MS = 600; // 600ms, 1200ms
-
-// Spaltenmapping für CSV/JSON-Normalisierung
-// statt const COLUMNS = [...] jetzt:
-const FIELDS = [
-  { upstream: "MaStR-Nr. der Einheit",                    title: "MaStR-Nr. der Einheit" },
-  { upstream: "Anzeige-Name der Einheit",                 title: "Anzeige-Name der Einheit" }, // <-- ggf. anpassen
-  { upstream: "Betriebs-Status",                          title: "Betriebs-Status" },
-  { upstream: "Energieträger",                            title: "Energieträger" },
-  { upstream: "Bruttoleistung der Einheit",               title: "Bruttoleistung der Einheit" },
-  { upstream: "Nettonennleistung der Einheit",            title: "Nettonennleistung der Einheit" },
-  { upstream: "Inbetriebnahmedatum der Einheit",          title: "Inbetriebnahmedatum der Einheit" },
-  { upstream: "Inbetriebnahmedatum der Einheit am aktuellen Standort", title: "Inbetriebnahmedatum der Einheit am aktuellen Standort" },
-  { upstream: "Registrierungsdatum der Einheit",          title: "Registrierungsdatum der Einheit" },
-  { upstream: "Bundesland",                               title: "Bundesland" },
-  { upstream: "Postleitzahl",                             title: "Postleitzahl" },
-  { upstream: "Ort",                                      title: "Ort" },
-  { upstream: "Straße",                                   title: "Straße" },
-  { upstream: "Hausnummer",                               title: "Hausnummer" },
-  { upstream: "Gemarkung",                                title: "Gemarkung" },
-  { upstream: "Flurstück",                                title: "Flurstück" },
-  { upstream: "Gemeindeschlüssel",                        title: "Gemeindeschlüssel" },
-  { upstream: "Gemeinde",                                 title: "Gemeinde" },
-  { upstream: "Landkreis",                                title: "Landkreis" },
-  { upstream: "Koordinate: Breitengrad (WGS84)",          title: "Koordinate: Breitengrad (WGS84)" },
-  { upstream: "Koordinate: Längengrad (WGS84)",           title: "Koordinate: Längengrad (WGS84)" },
-  { upstream: "Technologie der Stromerzeugung",           title: "Technologie der Stromerzeugung" },
-  { upstream: "Art der Solaranlage",                      title: "Art der Solaranlage" },
-  { upstream: "Anzahl der Solar-Module",                  title: "Anzahl der Solar-Module" },
-  { upstream: "Hauptausrichtung der Solar-Module",        title: "Hauptausrichtung der Solar-Module" },
-  { upstream: "Hauptneigungswinkel der Solar-Module",     title: "Hauptneigungswinkel der Solar-Module" },
-  { upstream: "Name des Solarparks",                      title: "Name des Solarparks" },
-  { upstream: "MaStR-Nr. der Speichereinheit",            title: "MaStR-Nr. der Speichereinheit" },
-  { upstream: "Speichertechnologie",                      title: "Speichertechnologie" },
-  { upstream: "Nutzbare Speicherkapazität in kWh",        title: "Nutzbare Speicherkapazität in kWh" },
-  { upstream: "Letzte Aktualisierung",                    title: "Letzte Aktualisierung" },
-  { upstream: "Datum der endgültigen Stilllegung",        title: "Datum der endgültigen Stilllegung" },
-  { upstream: "Datum der geplanten Inbetriebnahme",       title: "Datum der geplanten Inbetriebnahme" },
-  { upstream: "Name des Anlagenbetreibers (nur Org.)",    title: "Name des Anlagenbetreibers (nur Org.)" },
-  { upstream: "MaStR-Nr. des Anlagenbetreibers",          title: "MaStR-Nr. des Anlagenbetreibers" },
-  { upstream: "Volleinspeisung oder Teileinspeisung",     title: "Volleinspeisung oder Teileinspeisung" },
-  { upstream: "MaStR-Nr. der Genehmigung",                title: "MaStR-Nr. der Genehmigung" },
-  { upstream: "Name des Anschluss-Netzbetreibers",        title: "Name des Anschluss-Netzbetreibers" },
-  { upstream: "MaStR-Nr. des Anschluss-Netzbetreibers",   title: "MaStR-Nr. des Anschluss-Netzbetreibers" },
-  { upstream: "Netzbetreiberprüfung",                     title: "Netzbetreiberprüfung" },
-  { upstream: "Spannungsebene",                           title: "Spannungsebene" },
-  { upstream: "MaStR-Nr. der Lokation",                   title: "MaStR-Nr. der Lokation" },
-  { upstream: "MaStR-Nr. der EEG-Anlage",                 title: "MaStR-Nr. der EEG-Anlage" },
-  { upstream: "EEG-Anlagenschlüssel",                     title: "EEG-Anlagenschlüssel" },
-  { upstream: "Inbetriebnahmedatum der EEG-Anlage",       title: "Inbetriebnahmedatum der EEG-Anlage" },
-  { upstream: "Installierte Leistung der EEG-Anlage",     title: "Installierte Leistung der EEG-Anlage" }
+const COLUMNS = [
+  { key: "MaStR-Nummer der Einheit", title: "MaStRNummer" },
+  { key: "Anlagenbetreiber (Name)",  title: "Betreiber" },
+  { key: "Energieträger",            title: "Energietraeger" },
+  { key: "Bruttoleistung",           title: "Bruttoleistung" },
+  { key: "Nettonennleistung",        title: "Nettonennleistung" },
+  { key: "Bundesland",               title: "Bundesland" },
+  { key: "Postleitzahl",             title: "PLZ" },
+  { key: "Ort",                      title: "Ort" },
+  { key: "Inbetriebnahmedatum der Einheit", title: "Inbetriebnahme" }
 ];
 
-// ---------------------- Helper ----------------------
 function toCSV(rows) {
-  const header = FIELDS.map(f => f.title).join(",");
+  const header = COLUMNS.map(c => c.title).join(",");
   const esc = (v) => {
     if (v === null || v === undefined) return "";
     const s = String(v);
     if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
     return s;
   };
-  const lines = rows.map(r => FIELDS.map(f => esc(r[f.title])).join(","));
+  const lines = rows.map(r => COLUMNS.map(c => esc(r[c.title])).join(","));
   return [header, ...lines].join("\n");
 }
 
-// ... später im Handler beim Mappen:
-for (const rec of data) {
-  const out = {};
-  for (const f of FIELDS) {
-    out[f.title] = rec[f.upstream] ?? "";
-  }
-  rows.push(out);
-}
-
-// Parse YYYY-MM-DD → Date (UTC)
-function parseISODate(iso) {
+function toTicks(iso) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
   if (!m) return null;
-  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
-  return new Date(Date.UTC(y, mo - 1, d, 0, 0, 0, 0));
+  const [, y, mo, d] = m;
+  const ms = Date.UTC(Number(y), Number(mo) - 1, Number(d), 0, 0, 0, 0);
+  return `/Date(${ms})/`;
 }
 
-// Format dd.MM.yyyy (UTC)
-function formatDDMMYYYYUTC(d) {
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const yyyy = d.getUTCFullYear();
-  return `${dd}.${mm}.${yyyy}`;
-}
-
-// Baut die Kendo-Filterklausel für inklusives Intervall [start, end)
-// -> gt auf Vortag von start, lt auf end
-function buildMastrDateRange(startISO, endISO) {
-  const start = parseISODate(startISO);
-  const end = parseISODate(endISO);
-  if (!start || !end) return null;
-
-  const lower = new Date(start.getTime());
-  lower.setUTCDate(lower.getUTCDate() - 1); // exklusiv Vortag
-  const upper = end; // exklusiv end
-
-  const lowerStr = formatDDMMYYYYUTC(lower);
-  const upperStr = formatDDMMYYYYUTC(upper);
-
-  return `Inbetriebnahmedatum der Einheit~gt~'${lowerStr}'~and~Inbetriebnahmedatum der Einheit~lt~'${upperStr}'`;
-}
-
-// Fetch mit eigenem Timeout
-async function fetchWithTimeout(url, { signal, headers } = {}) {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort("timeout"), PER_REQUEST_TIMEOUT_MS);
-
-  if (signal) {
-    signal.addEventListener("abort", () => {
-      try { ac.abort(signal.reason || "parent_abort"); } catch {}
-    }, { once: true });
-  }
-
-  try {
-    const resp = await fetch(url, {
-      headers: {
-        "Accept": "application/json",
-        "User-Agent": "mastr-proxy-vercel",
-        "X-Requested-With": "XMLHttpRequest",
-        "Referer": "https://www.marktstammdatenregister.de/",
-        ...(headers || {})
-      },
-      signal: ac.signal
-    });
-    return resp;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// Fetch JSON mit Retries bei 429/5xx/Timeout/Netzfehlern
 async function fetchJSON(url, signal) {
-  let attempt = 0;
-  while (true) {
-    try {
-      const resp = await fetchWithTimeout(url, { signal });
-      if (!resp.ok) {
-        if ([429, 500, 502, 503, 504].includes(resp.status) && attempt < RETRIES) {
-          const retryAfter = parseFloat(resp.headers.get("retry-after") || "0");
-          const wait = retryAfter > 0 ? retryAfter * 1000 : BACKOFF_BASE_MS * Math.pow(2, attempt);
-          await new Promise(r => setTimeout(r, wait));
-          attempt++;
-          continue;
-        }
-        const body = await resp.text().catch(() => "");
-        throw new Error(`Upstream HTTP ${resp.status}: ${body?.slice(0, 300)}`);
-      }
-      return await resp.json();
-    } catch (err) {
-      const transient = (err && (err.name === "AbortError" || /timeout|ECONNRESET|ENOTFOUND|EAI_AGAIN/i.test(String(err))));
-      if (transient && attempt < RETRIES) {
-        const wait = BACKOFF_BASE_MS * Math.pow(2, attempt);
-        await new Promise(r => setTimeout(r, wait));
-        attempt++;
-        continue;
-      }
-      throw err;
-    }
+  const resp = await fetch(url, {
+    headers: {
+      "Accept": "application/json",
+      "User-Agent": "mastr-proxy-vercel",
+      "X-Requested-With": "XMLHttpRequest",
+      "Referer": "https://www.marktstammdatenregister.de/"
+    },
+    signal
+  });
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => "");
+    throw new Error(`Upstream HTTP ${resp.status}: ${body?.slice(0, 300)}`);
   }
+  return resp.json();
 }
 
-// Optional: nicht-numerischen Energieträger in Code auflösen (best effort)
-async function tryResolveCarrierCode(carrierQ, signal) {
-  if (/^\d+$/.test(carrierQ)) return String(carrierQ);
-  try {
-    const meta = await fetchJSON(FILTER_META, signal);
-    const carrierFilter = Array.isArray(meta)
-      ? meta.find(f => (f.FilterName || "").toLowerCase() === "energieträger")
-      : null;
-    if (carrierFilter && Array.isArray(carrierFilter.ListObject)) {
-      const cq = (carrierQ || "").toLowerCase();
-      const exact  = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase() === cq);
-      const starts = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().startsWith(cq));
-      const incl   = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().includes(cq));
-      const chosen = exact || starts || incl || null;
-      if (chosen) return String(chosen.Value);
-    }
-  } catch {/* ignore, fallback unten */}
-  return "2495"; // Solare Strahlungsenergie
-}
-
-// ---------------------- Handler ----------------------
 module.exports = async (req, res) => {
-  // CORS & Cache
+  // --- CORS & caching ---
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cache-Control", "no-store");
 
@@ -207,70 +64,93 @@ module.exports = async (req, res) => {
     const url = new URL(req.url, `https://${req.headers.host}`);
     const startISO = url.searchParams.get("start");
     const endISO   = url.searchParams.get("end");
-    const carrierQ = (url.searchParams.get("carrier") || "2495").trim(); // bevorzugt Code
-    const statusQ  = (url.searchParams.get("status") || "").trim().toLowerCase(); // z.B. "35" oder "off"
+    const carrierQ = (url.searchParams.get("carrier") || "Solare Strahlungsenergie").trim();
     const format   = (url.searchParams.get("format") || "csv").toLowerCase();
 
-    const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "200", 10), 2000);
+    const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "500", 10), 2000);
     const maxPages = Math.min(parseInt(url.searchParams.get("maxpages") || "1", 10), 20);
 
     if (!startISO || !endISO) {
-      res.status(400).send("Missing 'start' or 'end' (YYYY-MM-DD). Example: ?start=2024-01-01&end=2024-02-01&format=csv");
+      res.status(400).send("Missing 'start' or 'end' (YYYY-MM-DD). Example: ?start=2024-01-01&end=2024-01-31&format=csv");
       return;
     }
 
-    const dateClause = buildMastrDateRange(startISO, endISO);
-    if (!dateClause) {
-      res.status(400).send("Invalid date format. Use YYYY-MM-DD for 'start' and 'end'.");
+    const startTicks = toTicks(startISO);
+    const endTicks   = toTicks(endISO);
+    if (!startTicks || !endTicks) {
+      res.status(400).send("Invalid date format. Use YYYY-MM-DD.");
       return;
     }
 
-    const ac = new AbortController(); // optional: gesamter Request kann abgebrochen werden
-    const carrierCode = await tryResolveCarrierCode(carrierQ, ac.signal);
+    const ac = new AbortController();
+    const to = setTimeout(() => ac.abort("timeout"), 8000);
 
-    // Filter zusammenbauen
-    const parts = [dateClause, `Energieträger~eq~'${carrierCode}'`];
-    if (statusQ && statusQ !== "off") {
-      const statusCode = /^\d+$/.test(statusQ) ? statusQ : "35"; // „In Betrieb“ als Fallback
-      parts.push(`Betriebs-Status~eq~'${statusCode}'`);
+    const meta = await fetchJSON(FILTER_META, ac.signal);
+    const carrierFilter = Array.isArray(meta)
+      ? meta.find(f => (f.FilterName || "").toLowerCase() === "energieträger")
+      : null;
+
+    let carrierCode = null;
+    if (carrierFilter && Array.isArray(carrierFilter.ListObject)) {
+      if (/^\d+$/.test(carrierQ)) {
+        const hit = carrierFilter.ListObject.find(x => String(x.Value) === carrierQ);
+        if (hit) carrierCode = String(hit.Value);
+      }
+      if (!carrierCode) {
+        const cq = carrierQ.toLowerCase();
+        const exact  = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase() === cq);
+        const starts = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().startsWith(cq));
+        const incl   = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().includes(cq));
+        const chosen = exact || starts || incl || null;
+        if (chosen) carrierCode = String(chosen.Value);
+      }
     }
-    const filterRaw = parts.join("~and~");
-    const filterEncoded = encodeURIComponent(filterRaw);
+    if (!carrierCode) carrierCode = "2495"; // Fallback: Solare Strahlungsenergie
 
+    const filterRaw = `Energieträger~eq~'${carrierCode}'`;
     let page = 1;
     const rows = [];
 
     while (page <= maxPages) {
+      const skip = (page - 1) * pageSize;
+      const take = pageSize;
+
       const q =
         `${BASE}?group=&sort=&aggregate=` +
-        `&forExport=true` +
         `&page=${page}&pageSize=${pageSize}` +
-        `&filter=${filterEncoded}`;
+        `&skip=${skip}&take=${take}` +
+        `&filter=${encodeURIComponent(filterRaw)}`;
 
       const j = await fetchJSON(q, ac.signal);
-      if (j && j.Error) {
-        res.status(502).send(`Upstream reported Error (Type=${j.Type || "?"}): ${j.Message || "no message"}`);
-        return;
+      const data = Array.isArray(j) ? j : (j.Data || j.data || []);
+      if (!Array.isArray(data) || data.length === 0) break;
+
+      for (const rec of data) {
+        const out = {};
+        for (const col of COLUMNS) {
+          if (col.key === "Inbetriebnahmedatum der Einheit") {
+            out[col.title] =
+              rec["Inbetriebnahmedatum der Einheit"] ??
+              rec["InbetriebnahmeDatum"] ??
+              rec["EegInbetriebnahmeDatum"] ??
+              "";
+          } else {
+            out[col.title] = rec[col.key] ?? "";
+          }
+        }
+
+        // lokales Datumsfenster
+        const dtStr = out["Inbetriebnahme"];
+        const ms = dtStr && /Date\((\d+)\)/.test(dtStr) ? parseInt(RegExp.$1, 10) : null;
+        if (ms && ms >= parseInt(startTicks.match(/\d+/)[0]) && ms < parseInt(endTicks.match(/\d+/)[0])) {
+          rows.push(out);
+        }
       }
-
-      // Das Grid liefert meist { Items: [...] }
-      const data =
-        Array.isArray(j?.Items) ? j.Items :
-        Array.isArray(j?.Data)  ? j.Data  :
-        Array.isArray(j)        ? j       : [];
-
-      if (!data.length) break;
-
-for (const rec of data) {
-  const out = {};
-  for (const f of FIELDS) {
-    out[f.title] = rec[f.upstream] ?? "";
-  }
-  rows.push(out);
-}
 
       page++;
     }
+
+    clearTimeout(to);
 
     if (format === "json") {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
