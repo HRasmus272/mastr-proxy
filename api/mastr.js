@@ -14,15 +14,15 @@ const BACKOFF_BASE_MS = 600; // 600ms, 1200ms
 
 // Spaltenmapping für CSV/JSON-Normalisierung
 const COLUMNS = [
-  { key: "MaStR-Nummer der Einheit", title: "MaStRNummer" },
-  { key: "Anlagenbetreiber (Name)",  title: "Betreiber" },
-  { key: "Energieträger",            title: "Energietraeger" },
+  { key: "MaStRNummer",              title: "MaStRNummer" },
+  { key: "AnlagenbetreiberName",     title: "Betreiber" },
+  { key: "EnergietraegerName",       title: "Energietraeger" },
   { key: "Bruttoleistung",           title: "Bruttoleistung" },
   { key: "Nettonennleistung",        title: "Nettonennleistung" },
   { key: "Bundesland",               title: "Bundesland" },
-  { key: "Postleitzahl",             title: "PLZ" },
+  { key: "Plz",                      title: "PLZ" },
   { key: "Ort",                      title: "Ort" },
-  { key: "Inbetriebnahmedatum der Einheit", title: "Inbetriebnahme" }
+  { key: "InbetriebnahmeDatum",      title: "Inbetriebnahme" }
 ];
 
 // ---------------------- Helper ----------------------
@@ -217,7 +217,7 @@ module.exports = async (req, res) => {
       for (const rec of data) {
         const out = {};
         for (const col of COLUMNS) {
-          if (col.key === "Inbetriebnahmedatum der Einheit") {
+          if (col.key === "InbetriebnahmeDatum") {
             out[col.title] =
               rec["Inbetriebnahmedatum der Einheit"] ??
               rec["InbetriebnahmeDatum"] ??
