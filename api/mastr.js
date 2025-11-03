@@ -13,69 +13,76 @@ const RETRIES = parseInt(process.env.MASTR_RETRIES || "2", 10);
 const BACKOFF_BASE_MS = 600; // 600ms, 1200ms
 
 // Spaltenmapping für CSV/JSON-Normalisierung
-const COLUMNS = [
-  // schon vorhanden (lassen wir drin):
-  { key: "MaStR-Nr. der Einheit", title: "MaStR-Nr. der Einheit" },
-  { key: "Anlagenbetreiber (Name)",  title: "Name des Anlagenbetreibers (nur Org.)" }, // siehe Wunschliste
-  { key: "Energieträger",            title: "Energieträger" },
-  { key: "Bruttoleistung",           title: "Bruttoleistung der Einheit" }, // Fallback-Logik unten
-  { key: "Nettonennleistung",        title: "Nettonennleistung der Einheit" },
-  { key: "Bundesland",               title: "Bundesland" },
-  { key: "Postleitzahl",             title: "Postleitzahl" },
-  { key: "Ort",                      title: "Ort" },
-  { key: "Inbetriebnahmedatum der Einheit", title: "Inbetriebnahmedatum der Einheit" },
-
-  // neu (deine Liste):
-  { key: "Anzeige-Name der Einheit",                           title: "Anzeige-Name der Einheit" },
-  { key: "Betriebs-Status",                                    title: "Betriebs-Status" },
-  { key: "Inbetriebnahmedatum der Einheit am aktuellen Standort", title: "Inbetriebnahmedatum der Einheit am aktuellen Standort" },
-  { key: "Registrierungsdatum der Einheit",                    title: "Registrierungsdatum der Einheit" },
-  { key: "Straße",                                             title: "Straße" },
-  { key: "Hausnummer",                                         title: "Hausnummer" },
-  { key: "Gemarkung",                                          title: "Gemarkung" },
-  { key: "Flurstück",                                          title: "Flurstück" },
-  { key: "Gemeindeschlüssel",                                  title: "Gemeindeschlüssel" },
-  { key: "Gemeinde",                                           title: "Gemeinde" },
-  { key: "Landkreis",                                          title: "Landkreis" },
-  { key: "Koordinate: Breitengrad (WGS84)",                    title: "Koordinate: Breitengrad (WGS84)" },
-  { key: "Koordinate: Längengrad (WGS84)",                     title: "Koordinate: Längengrad (WGS84)" },
-  { key: "Technologie der Stromerzeugung",                     title: "Technologie der Stromerzeugung" },
-  { key: "Art der Solaranlage",                                title: "Art der Solaranlage" },
-  { key: "Anzahl der Solar-Module",                            title: "Anzahl der Solar-Module" },
-  { key: "Hauptausrichtung der Solar-Module",                  title: "Hauptausrichtung der Solar-Module" },
-  { key: "Hauptneigungswinkel der Solar-Module",               title: "Hauptneigungswinkel der Solar-Module" },
-  { key: "Name des Solarparks",                                title: "Name des Solarparks" },
-  { key: "MaStR-Nummer der Speichereinheit",                   title: "MaStR-Nr. der Speichereinheit" },
-  { key: "Speichertechnologie",                                title: "Speichertechnologie" },
-  { key: "Nutzbare Speicherkapazität in kWh",                  title: "Nutzbare Speicherkapazität in kWh" },
-  { key: "Letzte Aktualisierung",                              title: "Letzte Aktualisierung" },
-  { key: "Datum der endgültigen Stilllegung",                  title: "Datum der endgültigen Stilllegung" },
-  { key: "Datum der geplanten Inbetriebnahme",                 title: "Datum der geplanten Inbetriebnahme" },
-  { key: "MaStR-Nummer des Anlagenbetreibers",                 title: "MaStR-Nr. des Anlagenbetreibers" },
-  { key: "Volleinspeisung oder Teileinspeisung",               title: "Volleinspeisung oder Teileinspeisung" },
-  { key: "MaStR-Nummer der Genehmigung",                       title: "MaStR-Nr. der Genehmigung" },
-  { key: "Name des Anschluss-Netzbetreibers",                  title: "Name des Anschluss-Netzbetreibers" },
-  { key: "MaStR-Nummer des Anschluss-Netzbetreibers",          title: "MaStR-Nr. des Anschluss-Netzbetreibers" },
-  { key: "Netzbetreiberprüfung",                               title: "Netzbetreiberprüfung" },
-  { key: "Spannungsebene",                                     title: "Spannungsebene" },
-  { key: "MaStR-Nummer der Lokation",                          title: "MaStR-Nr. der Lokation" },
-  { key: "MaStR-Nummer der EEG-Anlage",                        title: "MaStR-Nr. der EEG-Anlage" },
-  { key: "EEG-Anlagenschlüssel",                               title: "EEG-Anlagenschlüssel" },
-  { key: "Inbetriebnahmedatum der EEG-Anlage",                 title: "Inbetriebnahmedatum der EEG-Anlage" },
-  { key: "Installierte Leistung der EEG-Anlage",               title: "Installierte Leistung der EEG-Anlage" }
+// statt const COLUMNS = [...] jetzt:
+const FIELDS = [
+  { upstream: "MaStR-Nr. der Einheit",                    title: "MaStR-Nr. der Einheit" },
+  { upstream: "Anzeige-Name der Einheit",                 title: "Anzeige-Name der Einheit" }, // <-- ggf. anpassen
+  { upstream: "Betriebs-Status",                          title: "Betriebs-Status" },
+  { upstream: "Energieträger",                            title: "Energieträger" },
+  { upstream: "Bruttoleistung der Einheit",               title: "Bruttoleistung der Einheit" },
+  { upstream: "Nettonennleistung der Einheit",            title: "Nettonennleistung der Einheit" },
+  { upstream: "Inbetriebnahmedatum der Einheit",          title: "Inbetriebnahmedatum der Einheit" },
+  { upstream: "Inbetriebnahmedatum der Einheit am aktuellen Standort", title: "Inbetriebnahmedatum der Einheit am aktuellen Standort" },
+  { upstream: "Registrierungsdatum der Einheit",          title: "Registrierungsdatum der Einheit" },
+  { upstream: "Bundesland",                               title: "Bundesland" },
+  { upstream: "Postleitzahl",                             title: "Postleitzahl" },
+  { upstream: "Ort",                                      title: "Ort" },
+  { upstream: "Straße",                                   title: "Straße" },
+  { upstream: "Hausnummer",                               title: "Hausnummer" },
+  { upstream: "Gemarkung",                                title: "Gemarkung" },
+  { upstream: "Flurstück",                                title: "Flurstück" },
+  { upstream: "Gemeindeschlüssel",                        title: "Gemeindeschlüssel" },
+  { upstream: "Gemeinde",                                 title: "Gemeinde" },
+  { upstream: "Landkreis",                                title: "Landkreis" },
+  { upstream: "Koordinate: Breitengrad (WGS84)",          title: "Koordinate: Breitengrad (WGS84)" },
+  { upstream: "Koordinate: Längengrad (WGS84)",           title: "Koordinate: Längengrad (WGS84)" },
+  { upstream: "Technologie der Stromerzeugung",           title: "Technologie der Stromerzeugung" },
+  { upstream: "Art der Solaranlage",                      title: "Art der Solaranlage" },
+  { upstream: "Anzahl der Solar-Module",                  title: "Anzahl der Solar-Module" },
+  { upstream: "Hauptausrichtung der Solar-Module",        title: "Hauptausrichtung der Solar-Module" },
+  { upstream: "Hauptneigungswinkel der Solar-Module",     title: "Hauptneigungswinkel der Solar-Module" },
+  { upstream: "Name des Solarparks",                      title: "Name des Solarparks" },
+  { upstream: "MaStR-Nr. der Speichereinheit",            title: "MaStR-Nr. der Speichereinheit" },
+  { upstream: "Speichertechnologie",                      title: "Speichertechnologie" },
+  { upstream: "Nutzbare Speicherkapazität in kWh",        title: "Nutzbare Speicherkapazität in kWh" },
+  { upstream: "Letzte Aktualisierung",                    title: "Letzte Aktualisierung" },
+  { upstream: "Datum der endgültigen Stilllegung",        title: "Datum der endgültigen Stilllegung" },
+  { upstream: "Datum der geplanten Inbetriebnahme",       title: "Datum der geplanten Inbetriebnahme" },
+  { upstream: "Name des Anlagenbetreibers (nur Org.)",    title: "Name des Anlagenbetreibers (nur Org.)" },
+  { upstream: "MaStR-Nr. des Anlagenbetreibers",          title: "MaStR-Nr. des Anlagenbetreibers" },
+  { upstream: "Volleinspeisung oder Teileinspeisung",     title: "Volleinspeisung oder Teileinspeisung" },
+  { upstream: "MaStR-Nr. der Genehmigung",                title: "MaStR-Nr. der Genehmigung" },
+  { upstream: "Name des Anschluss-Netzbetreibers",        title: "Name des Anschluss-Netzbetreibers" },
+  { upstream: "MaStR-Nr. des Anschluss-Netzbetreibers",   title: "MaStR-Nr. des Anschluss-Netzbetreibers" },
+  { upstream: "Netzbetreiberprüfung",                     title: "Netzbetreiberprüfung" },
+  { upstream: "Spannungsebene",                           title: "Spannungsebene" },
+  { upstream: "MaStR-Nr. der Lokation",                   title: "MaStR-Nr. der Lokation" },
+  { upstream: "MaStR-Nr. der EEG-Anlage",                 title: "MaStR-Nr. der EEG-Anlage" },
+  { upstream: "EEG-Anlagenschlüssel",                     title: "EEG-Anlagenschlüssel" },
+  { upstream: "Inbetriebnahmedatum der EEG-Anlage",       title: "Inbetriebnahmedatum der EEG-Anlage" },
+  { upstream: "Installierte Leistung der EEG-Anlage",     title: "Installierte Leistung der EEG-Anlage" }
 ];
 
 // ---------------------- Helper ----------------------
 function toCSV(rows) {
-  const header = COLUMNS.map(c => c.title).join(",");
+  const header = FIELDS.map(f => f.title).join(",");
   const esc = (v) => {
     if (v === null || v === undefined) return "";
     const s = String(v);
     if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
     return s;
   };
-  const lines = rows.map(r => COLUMNS.map(c => esc(r[c.title])).join(","));
+  const lines = rows.map(r => FIELDS.map(f => esc(r[f.title])).join(","));
   return [header, ...lines].join("\n");
+}
+
+// ... später im Handler beim Mappen:
+for (const rec of data) {
+  const out = {};
+  for (const f of FIELDS) {
+    out[f.title] = rec[f.upstream] ?? "";
+  }
+  rows.push(out);
 }
 
 // Parse YYYY-MM-DD → Date (UTC)
