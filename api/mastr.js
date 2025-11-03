@@ -1,62 +1,31 @@
 // /api/mastr.js — Node.js Serverless Function (CommonJS)
-// MaStR → Proxy mit lokalem Datumsfilter, ohne Meta-Calls.
+// MaStR-Proxy mit SERVERSEITIGEM Datumsfilter (Inbetriebnahmedatum der Einheit, gt/lt, dd.MM.yyyy)
+// Features: Pagination, optionaler Status-Filter, CSV/JSON-Ausgabe, Timeout & Retries
 
+// ---------------------- Konfiguration ----------------------
 const BASE =
-  "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetErweiterteOeffentlicheEinheitStromerzeugung";
+  https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetErweiterteOeffentlicheEinheitStromerzeugung;
 const FILTER_META =
-  "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetFilterColumnsErweiterteOeffentlicheEinheitStromerzeugung";
+  https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetFilterColumnsErweiterteOeffentlicheEinheitStromerzeugung;
 
-// === Deine gewünschte Feldliste ===
-// key = Upstream-Name (so liefert MaStR), title = Spaltenname in der Ausgabe
+const PER_REQUEST_TIMEOUT_MS = parseInt(process.env.MASTR_TIMEOUT_MS || "20000", 10); // 20s
+const RETRIES = parseInt(process.env.MASTR_RETRIES || "2", 10);
+const BACKOFF_BASE_MS = 600; // 600ms, 1200ms
+
+// Spaltenmapping für CSV/JSON-Normalisierung
 const COLUMNS = [
-  { key: "MaStRNummer",                                      title: "MaStR-Nr. der Einheit" },
-  { key: "EinheitName",                                      title: "Anzeige-Name der Einheit" },
-  { key: "BetriebsStatusName",                               title: "Betriebs-Status" },
-  { key: "EnergietraegerName",                               title: "Energieträger" },
-  { key: "Bruttoleistung",                                   title: "Bruttoleistung der Einheit" },
-  { key: "Nettonennleistung",                                title: "Nettonennleistung der Einheit" },
-  { key: "InbetriebnahmeDatum",                              title: "Inbetriebnahmedatum der Einheit" },
-  { key: "Inbetriebnahmedatum der Einheit am aktuellen Standort", title: "Inbetriebnahmedatum der Einheit am aktuellen Standort" },
-  { key: "EinheitRegistrierungsdatum",                       title: "Registrierungsdatum der Einheit" },
-  { key: "Bundesland",                                       title: "Bundesland" },
-  { key: "Plz",                                              title: "Postleitzahl" },
-  { key: "Ort",                                              title: "Ort" },
-  { key: "Straße",                                           title: "Straße" },
-  { key: "Hausnummer",                                       title: "Hausnummer" },
-  { key: "Gemarkung",                                        title: "Gemarkung" },
-  { key: "Flurstück",                                        title: "Flurstück" },
-  { key: "Gemeindeschlüssel",                                title: "Gemeindeschlüssel" },
-  { key: "Gemeinde",                                         title: "Gemeinde" },
-  { key: "Landkreis",                                        title: "Landkreis" },
-  { key: "Koordinate: Breitengrad (WGS84)",                  title: "Koordinate: Breitengrad (WGS84)" },
-  { key: "Koordinate: Längengrad (WGS84)",                   title: "Koordinate: Längengrad (WGS84)" },
-  { key: "Technologie der Stromerzeugung",                   title: "Technologie der Stromerzeugung" },
-  { key: "Art der Solaranlage",                              title: "Art der Solaranlage" },
-  { key: "Anzahl der Solar-Module",                          title: "Anzahl der Solar-Module" },
-  { key: "Hauptausrichtung der Solar-Module",                title: "Hauptausrichtung der Solar-Module" },
-  { key: "Hauptneigungswinkel der Solar-Module",             title: "Hauptneigungswinkel der Solar-Module" },
-  { key: "Name des Solarparks",                              title: "Name des Solarparks" },
-  { key: "MaStR-Nummer der Speichereinheit",                 title: "MaStR-Nr. der Speichereinheit" },
-  { key: "Speichertechnologie",                              title: "Speichertechnologie" },
-  { key: "Nutzbare Speicherkapazität in kWh",                title: "Nutzbare Speicherkapazität in kWh" },
-  { key: "Letzte Aktualisierung",                            title: "Letzte Aktualisierung" },
-  { key: "Datum der endgültigen Stilllegung",                title: "Datum der endgültigen Stilllegung" },
-  { key: "Datum der geplanten Inbetriebnahme",               title: "Datum der geplanten Inbetriebnahme" },
-  { key: "Name des Anlagenbetreibers (nur Org.)",            title: "Name des Anlagenbetreibers (nur Org.)" },
-  { key: "MaStR-Nummer des Anlagenbetreibers",               title: "MaStR-Nr. des Anlagenbetreibers" },
-  { key: "Volleinspeisung oder Teileinspeisung",             title: "Volleinspeisung oder Teileinspeisung" },
-  { key: "MaStR-Nummer der Genehmigung",                     title: "MaStR-Nr. der Genehmigung" },
-  { key: "Name des Anschluss-Netzbetreibers",                title: "Name des Anschluss-Netzbetreibers" },
-  { key: "MaStR-Nummer des Anschluss-Netzbetreibers",        title: "MaStR-Nr. des Anschluss-Netzbetreibers" },
-  { key: "Netzbetreiberprüfung",                             title: "Netzbetreiberprüfung" },
-  { key: "Spannungsebene",                                   title: "Spannungsebene" },
-  { key: "MaStR-Nummer der Lokation",                        title: "MaStR-Nr. der Lokation" },
-  { key: "MaStR-Nummer der EEG-Anlage",                      title: "MaStR-Nr. der EEG-Anlage" },
-  { key: "EEG-Anlagenschlüssel",                             title: "EEG-Anlagenschlüssel" },
-  { key: "Inbetriebnahmedatum der EEG-Anlage",               title: "Inbetriebnahmedatum der EEG-Anlage" },
-  { key: "Installierte Leistung der EEG-Anlage",             title: "Installierte Leistung der EEG-Anlage" }
+  { key: "MaStR-Nummer der Einheit", title: "MaStRNummer" },
+  { key: "Anlagenbetreiber (Name)",  title: "Betreiber" },
+  { key: "Energieträger",            title: "Energietraeger" },
+  { key: "Bruttoleistung",           title: "Bruttoleistung" },
+  { key: "Nettonennleistung",        title: "Nettonennleistung" },
+  { key: "Bundesland",               title: "Bundesland" },
+  { key: "Postleitzahl",             title: "PLZ" },
+  { key: "Ort",                      title: "Ort" },
+  { key: "Inbetriebnahmedatum der Einheit", title: "Inbetriebnahme" }
 ];
 
+// ---------------------- Helper ----------------------
 function toCSV(rows) {
   const header = COLUMNS.map(c => c.title).join(",");
   const esc = (v) => {
@@ -69,33 +38,121 @@ function toCSV(rows) {
   return [header, ...lines].join("\n");
 }
 
-function toTicks(iso) {
+// Parse YYYY-MM-DD → Date (UTC)
+function parseISODate(iso) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
   if (!m) return null;
-  const [, y, mo, d] = m;
-  const ms = Date.UTC(Number(y), Number(mo) - 1, Number(d), 0, 0, 0, 0);
-  return `/Date(${ms})/`;
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  return new Date(Date.UTC(y, mo - 1, d, 0, 0, 0, 0));
 }
 
-async function fetchJSON(url, signal) {
-  const resp = await fetch(url, {
-    headers: {
-      "Accept": "application/json",
-      "User-Agent": "mastr-proxy-vercel",
-      "X-Requested-With": "XMLHttpRequest",
-      "Referer": "https://www.marktstammdatenregister.de/"
-    },
-    signal
-  });
-  if (!resp.ok) {
-    const body = await resp.text().catch(() => "");
-    throw new Error(`Upstream HTTP ${resp.status}: ${body?.slice(0, 300)}`);
+// Format dd.MM.yyyy (UTC)
+function formatDDMMYYYYUTC(d) {
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const yyyy = d.getUTCFullYear();
+  return `${dd}.${mm}.${yyyy}`;
+}
+
+// Baut die Kendo-Filterklausel für inklusives Intervall [start, end)
+// -> gt auf Vortag von start, lt auf end
+function buildMastrDateRange(startISO, endISO) {
+  const start = parseISODate(startISO);
+  const end = parseISODate(endISO);
+  if (!start || !end) return null;
+
+  const lower = new Date(start.getTime());
+  lower.setUTCDate(lower.getUTCDate() - 1); // exklusiv Vortag
+  const upper = end; // exklusiv end
+
+  const lowerStr = formatDDMMYYYYUTC(lower);
+  const upperStr = formatDDMMYYYYUTC(upper);
+
+  return `Inbetriebnahmedatum der Einheit~gt~'${lowerStr}'~and~Inbetriebnahmedatum der Einheit~lt~'${upperStr}'`;
+}
+
+// Fetch mit eigenem Timeout
+async function fetchWithTimeout(url, { signal, headers } = {}) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort("timeout"), PER_REQUEST_TIMEOUT_MS);
+
+  if (signal) {
+    signal.addEventListener("abort", () => {
+      try { ac.abort(signal.reason || "parent_abort"); } catch {}
+    }, { once: true });
   }
-  return resp.json();
+
+  try {
+    const resp = await fetch(url, {
+      headers: {
+        "Accept": "application/json",
+        "User-Agent": "mastr-proxy-vercel",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": https://www.marktstammdatenregister.de/,
+        ...(headers || {})
+      },
+      signal: ac.signal
+    });
+    return resp;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
+// Fetch JSON mit Retries bei 429/5xx/Timeout/Netzfehlern
+async function fetchJSON(url, signal) {
+  let attempt = 0;
+  while (true) {
+    try {
+      const resp = await fetchWithTimeout(url, { signal });
+      if (!resp.ok) {
+        if ([429, 500, 502, 503, 504].includes(resp.status) && attempt < RETRIES) {
+          const retryAfter = parseFloat(resp.headers.get("retry-after") || "0");
+          const wait = retryAfter > 0 ? retryAfter * 1000 : BACKOFF_BASE_MS * Math.pow(2, attempt);
+          await new Promise(r => setTimeout(r, wait));
+          attempt++;
+          continue;
+        }
+        const body = await resp.text().catch(() => "");
+        throw new Error(`Upstream HTTP ${resp.status}: ${body?.slice(0, 300)}`);
+      }
+      return await resp.json();
+    } catch (err) {
+      const transient = (err && (err.name === "AbortError" || /timeout|ECONNRESET|ENOTFOUND|EAI_AGAIN/i.test(String(err))));
+      if (transient && attempt < RETRIES) {
+        const wait = BACKOFF_BASE_MS * Math.pow(2, attempt);
+        await new Promise(r => setTimeout(r, wait));
+        attempt++;
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+// Optional: nicht-numerischen Energieträger in Code auflösen (best effort)
+async function tryResolveCarrierCode(carrierQ, signal) {
+  if (/^\d+$/.test(carrierQ)) return String(carrierQ);
+  try {
+    const meta = await fetchJSON(FILTER_META, signal);
+    const carrierFilter = Array.isArray(meta)
+      ? meta.find(f => (f.FilterName || "").toLowerCase() === "energieträger")
+      : null;
+    if (carrierFilter && Array.isArray(carrierFilter.ListObject)) {
+      const cq = (carrierQ || "").toLowerCase();
+      const exact  = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase() === cq);
+      const starts = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().startsWith(cq));
+      const incl   = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().includes(cq));
+      const chosen = exact || starts || incl || null;
+      if (chosen) return String(chosen.Value);
+    }
+  } catch {/* ignore, fallback unten */}
+  return "2495"; // Solare Strahlungsenergie
+}
+
+// ---------------------- Handler ----------------------
 module.exports = async (req, res) => {
-  // --- CORS & caching ---
+  // CORS & Cache
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cache-Control", "no-store");
 
@@ -103,100 +160,78 @@ module.exports = async (req, res) => {
     const url = new URL(req.url, `https://${req.headers.host}`);
     const startISO = url.searchParams.get("start");
     const endISO   = url.searchParams.get("end");
-    const carrierQ = (url.searchParams.get("carrier") || "Solare Strahlungsenergie").trim();
+    const carrierQ = (url.searchParams.get("carrier") || "2495").trim(); // bevorzugt Code
+    const statusQ  = (url.searchParams.get("status") || "").trim().toLowerCase(); // z.B. "35" oder "off"
     const format   = (url.searchParams.get("format") || "csv").toLowerCase();
 
-    const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "500", 10), 2000);
+    const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "200", 10), 2000);
     const maxPages = Math.min(parseInt(url.searchParams.get("maxpages") || "1", 10), 20);
 
     if (!startISO || !endISO) {
-      res.status(400).send("Missing 'start' or 'end' (YYYY-MM-DD). Example: ?start=2024-01-01&end=2024-01-31&format=csv");
+      res.status(400).send("Missing 'start' or 'end' (YYYY-MM-DD). Example: ?start=2024-01-01&end=2024-02-01&format=csv");
       return;
     }
 
-    const startTicks = toTicks(startISO);
-    const endTicks   = toTicks(endISO);
-    const startMs = Number((startTicks.match(/\d+/) || [0])[0]);
-    const endMs   = Number((endTicks.match(/\d+/)   || [0])[0]);    
-    if (!startTicks || !endTicks) {
-      res.status(400).send("Invalid date format. Use YYYY-MM-DD.");
+    const dateClause = buildMastrDateRange(startISO, endISO);
+    if (!dateClause) {
+      res.status(400).send("Invalid date format. Use YYYY-MM-DD for 'start' and 'end'.");
       return;
     }
 
-    const ac = new AbortController();
-    const to = setTimeout(() => ac.abort("timeout"), 30000); // 30s timeout
+    const ac = new AbortController(); // optional: gesamter Request kann abgebrochen werden
+    const carrierCode = await tryResolveCarrierCode(carrierQ, ac.signal);
 
-    const meta = await fetchJSON(FILTER_META, ac.signal);
-    const carrierFilter = Array.isArray(meta)
-      ? meta.find(f => (f.FilterName || "").toLowerCase() === "energieträger")
-      : null;
-
-    let carrierCode = null;
-    if (carrierFilter && Array.isArray(carrierFilter.ListObject)) {
-      if (/^\d+$/.test(carrierQ)) {
-        const hit = carrierFilter.ListObject.find(x => String(x.Value) === carrierQ);
-        if (hit) carrierCode = String(hit.Value);
-      }
-      if (!carrierCode) {
-        const cq = carrierQ.toLowerCase();
-        const exact  = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase() === cq);
-        const starts = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().startsWith(cq));
-        const incl   = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase().includes(cq));
-        const chosen = exact || starts || incl || null;
-        if (chosen) carrierCode = String(chosen.Value);
-      }
+    // Filter zusammenbauen
+    const parts = [dateClause, `Energieträger~eq~'${carrierCode}'`];
+    if (statusQ && statusQ !== "off") {
+      const statusCode = /^\d+$/.test(statusQ) ? statusQ : "35"; // „In Betrieb“ als Fallback
+      parts.push(`Betriebs-Status~eq~'${statusCode}'`);
     }
-    if (!carrierCode) carrierCode = "2495"; // Fallback: Solare Strahlungsenergie
-
-    const filterRaw = `Energieträger~eq~'${carrierCode}'`;
+    const filterRaw = parts.join("~and~");
+    const filterEncoded = encodeURIComponent(filterRaw);
 
     let page = 1;
     const rows = [];
 
     while (page <= maxPages) {
-      const skip = (page - 1) * pageSize;
-      const take = pageSize;
-
       const q =
         `${BASE}?group=&sort=&aggregate=` +
+        `&forExport=true` +
         `&page=${page}&pageSize=${pageSize}` +
-        `&skip=${skip}&take=${take}` +
-        `&filter=${encodeURIComponent(filterRaw)}`;
+        `&filter=${filterEncoded}`;
 
       const j = await fetchJSON(q, ac.signal);
-      const data = Array.isArray(j) ? j : (j.Data || j.data || []);
-      if (!Array.isArray(data) || data.length === 0) break;
+      if (j && j.Error) {
+        res.status(502).send(`Upstream reported Error (Type=${j.Type || "?"}): ${j.Message || "no message"}`);
+        return;
+      }
+
+      // Das Grid liefert meist { Items: [...] }
+      const data =
+        Array.isArray(j?.Items) ? j.Items :
+        Array.isArray(j?.Data)  ? j.Data  :
+        Array.isArray(j)        ? j       : [];
+
+      if (!data.length) break;
 
       for (const rec of data) {
         const out = {};
         for (const col of COLUMNS) {
-          if (col.title === "Inbetriebnahmedatum der Einheit") {
-            // minimaler Fallback; wenn nicht gewünscht, ersetze die 3 Zeilen durch: const val = rec[col.key] ?? "";
-            const val =
+          if (col.key === "Inbetriebnahmedatum der Einheit") {
+            out[col.title] =
               rec["Inbetriebnahmedatum der Einheit"] ??
               rec["InbetriebnahmeDatum"] ??
               rec["EegInbetriebnahmeDatum"] ??
               "";
-            out[col.title] = val;
           } else {
             out[col.title] = rec[col.key] ?? "";
           }
         }
-        // lokale Datumsfilterung (inklusive Untergrenze, exklusive Obergrenze)
-const dt = out["Inbetriebnahmedatum der Einheit"]; // kommt als "/Date(…)/"
-const m  = dt && dt.match(/\d+/);
-const ms = m ? Number(m[0]) : NaN;
-
-if (!Number.isNaN(ms) && ms >= startMs && ms < endMs) {
-  rows.push(out);
-}
-// sonst: außerhalb des Fensters -> weglassen
+        rows.push(out);
       }
 
       page++;
     }
-
-    clearTimeout(to);
 
     if (format === "json") {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
