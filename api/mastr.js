@@ -7,7 +7,7 @@ const FILTER_META =
   "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetFilterColumnsErweiterteOeffentlicheEinheitStromerzeugung";
 
 const COLUMNS = [
-  { key: "MaStR-Nr. der Einheit", title: "MaStRNummer" },
+  { key: "MaStRNummer",              title: "MaStRNummer" },
   { key: "Anlagenbetreiber (Name)",  title: "Betreiber" },
   { key: "Energieträger",            title: "Energietraeger" },
   { key: "Bruttoleistung",           title: "Bruttoleistung" },
