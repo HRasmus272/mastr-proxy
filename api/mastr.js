@@ -24,7 +24,7 @@ const COLUMNS = [
   { key: "Bruttoleistung",                     title: "Bruttoleistung" },
   { key: "Nettonennleistung",                  title: "Nettonennleistung" },
   { key: "InbetriebnahmeDatum",                title: "Inbetriebnahme" },
-  { key: "InbetriebnahmeDatumAmAktuellenOrt", title: "Inbetriebnahmedatum der Einheit am aktuellen Standort" },
+  { key: "InbetriebnahmeDatumAmAktuellenOrt",  title: "Inbetriebnahmedatum der Einheit am aktuellen Standort" },
   { key: "EinheitRegistrierungsdatum",         title: "Registrierungsdatum der Einheit" },
   { key: "Bundesland",                         title: "Bundesland" },
   { key: "Plz",                                title: "PLZ" },
@@ -41,7 +41,7 @@ const COLUMNS = [
   { key: "TechnologieStromerzeugung",          title: "Technologie der Stromerzeugung" },
   { key: "ArtDerSolaranlageBezeichnung",       title: "Art der Solaranlage" },
   { key: "AnzahlSolarModule",                  title: "Anzahl der Solar-Module" },
-  { key: "HauptausrichtungSolarModuleBezeichnung",        title: "Hauptausrichtung der Solar-Module" },
+  { key: "HauptausrichtungSolarModuleBezeichnung", title: "Hauptausrichtung der Solar-Module" },
   { key: "HauptneigungswinkelSolarmodule",     title: "Hauptneigungswinkel der Solar-Module" },
   { key: "SolarparkName",                      title: "Name des Solarparks" },
   { key: "SpeicherEinheitMastrNummer",         title: "MaStR-Nr. der Speichereinheit" },
@@ -63,8 +63,6 @@ const COLUMNS = [
   { key: "EegAnlagenschluessel",               title: "EEG-Anlagenschlüssel" },
   { key: "EegInbetriebnahmeDatum",             title: "Inbetriebnahmedatum der EEG-Anlage" },
   { key: "EegInstallierteLeistung",            title: "Installierte Leistung der EEG-Anlage" },
-  
- 
 ];
 
 // ---------------------- Helper ----------------------
@@ -207,8 +205,12 @@ module.exports = async (req, res) => {
     const format   = (url.searchParams.get("format") || "csv").toLowerCase();
     const debugQ   = (url.searchParams.get("debug") || "").toLowerCase(); // "keys" | "sample" | "fields"
 
-    const pageSize = Math.min(parseInt(url.searchParams.get("pagesize") || "200", 10), 2000);
-    const maxPages = Math.min(parseInt(url.searchParams.get("maxpages") || "1", 10), 20);
+    // ---- NEU: flexiblere Limits ----
+    const pageSizeReq = parseInt(url.searchParams.get("pagesize") || "2000", 10);
+    const pageSize = Math.max(1, Math.min(isNaN(pageSizeReq) ? 2000 : pageSizeReq, 5000)); // bis 5000
+
+    const maxPagesReq = parseInt(url.searchParams.get("maxpages") || "0", 10);
+    const maxPages = Math.max(0, isNaN(maxPagesReq) ? 0 : maxPagesReq); // 0 = unbegrenzt
 
     if (!startISO || !endISO) {
       res.status(400).send("Missing 'start' or 'end' (YYYY-MM-DD). Example: ?start=2024-01-01&end=2024-02-01&format=csv");
@@ -235,8 +237,12 @@ module.exports = async (req, res) => {
 
     let page = 1;
     const rows = [];
+    let pagesFetched = 0;
 
-    while (page <= maxPages) {
+    while (true) {
+      // Sicherheitsdeckel prüfen (nur wenn >0 gesetzt)
+      if (maxPages > 0 && page > maxPages) break;
+
       const q =
         `${BASE}?group=&sort=&aggregate=` +
         `&forExport=true` +
@@ -300,6 +306,7 @@ module.exports = async (req, res) => {
         Array.isArray(j?.Data)  ? j.Data  :
         Array.isArray(j)        ? j       : [];
 
+      // --- NEU: „bis leer“ ---
       if (!data.length) break;
 
       for (const rec of data) {
@@ -319,10 +326,14 @@ module.exports = async (req, res) => {
         rows.push(out);
       }
 
+      pagesFetched++;
       page++;
     }
 
     // Ausgabe
+    res.setHeader("X-Pages-Fetched", String(pagesFetched));
+    res.setHeader("X-Rows", String(rows.length));
+
     if (format === "json") {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
       res.status(200).send(JSON.stringify(rows));
