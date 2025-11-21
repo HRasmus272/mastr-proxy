@@ -14,8 +14,6 @@ const RETRIES = parseInt(process.env.MASTR_RETRIES || "2", 10);
 const BACKOFF_BASE_MS = 600; // 600ms, 1200ms
 
 // ---------------------- Spaltenmapping ----------------------
-// key = exakter JSON-Feldname der API, title = Ausgabespaltenname
-// Falls abweichend, mit &debug=keys exakt prüfen und hier anpassen.
 const COLUMNS = [
   { key: "MaStRNummer",                        title: "MaStR-Nr. der Einheit" },
   { key: "EinheitName",                        title: "Anzeige-Name der Einheit" },
@@ -95,7 +93,6 @@ function formatDDMMYYYYUTC(d) {
 }
 
 // Baut die Kendo-Filterklausel für inklusives Intervall [start, end)
-// -> gt auf Vortag von start, lt auf end
 function buildMastrDateRange(startISO, endISO) {
   const start = parseISODate(startISO);
   const end = parseISODate(endISO);
@@ -139,7 +136,7 @@ async function fetchWithTimeout(url, { signal, headers } = {}) {
   }
 }
 
-// Fetch JSON mit Retries bei 429/5xx/Timeout/Netzfehlern
+// Fetch JSON mit Retries
 async function fetchJSON(url, signal) {
   let attempt = 0;
   while (true) {
@@ -170,7 +167,7 @@ async function fetchJSON(url, signal) {
   }
 }
 
-// Optional: nicht-numerischen Energieträger in Code auflösen (best effort)
+// Energieträger-Code auflösen
 async function tryResolveCarrierCode(carrierQ, signal) {
   if (/^\d+$/.test(carrierQ)) return String(carrierQ);
   try {
@@ -186,13 +183,83 @@ async function tryResolveCarrierCode(carrierQ, signal) {
       const chosen = exact || starts || incl || null;
       if (chosen) return String(chosen.Value);
     }
-  } catch {/* ignore, fallback unten */}
+  } catch {/* ignore */}
   return "2495"; // Solare Strahlungsenergie
+}
+
+// ---------- NEU: Helfer für einen Zeitbereich (wird später parallelisiert) ----------
+async function fetchRangeRows({
+  startISO,
+  endISO,
+  carrierCode,
+  statusQ,
+  pageSize,
+  maxPages,
+  signal
+}) {
+  const dateClause = buildMastrDateRange(startISO, endISO);
+  if (!dateClause) {
+    throw new Error("Invalid date format. Use YYYY-MM-DD for 'start' and 'end'.");
+  }
+
+  const parts = [dateClause, `Energieträger~eq~'${carrierCode}'`];
+  if (statusQ && statusQ !== "off") {
+    const statusCode = /^\d+$/.test(statusQ) ? statusQ : "35";
+    parts.push(`Betriebs-Status~eq~'${statusCode}'`);
+  }
+  const filterRaw = parts.join("~and~");
+  const filterEncoded = encodeURIComponent(filterRaw);
+
+  let page = 1;
+  const rows = [];
+  let pagesFetched = 0;
+
+  while (true) {
+    if (maxPages > 0 && page > maxPages) break;
+
+    const q =
+      `${BASE}?group=&sort=&aggregate=` +
+      `&forExport=true` +
+      `&page=${page}&pageSize=${pageSize}` +
+      `&filter=${filterEncoded}`;
+
+    const j = await fetchJSON(q, signal);
+    if (j && j.Error) {
+      throw new Error(`Upstream reported Error (Type=${j.Type || "?"}): ${j.Message || "no message"}`);
+    }
+
+    const data =
+      Array.isArray(j?.Items) ? j.Items :
+      Array.isArray(j?.Data)  ? j.Data  :
+      Array.isArray(j)        ? j       : [];
+
+    if (!data.length) break;
+
+    for (const rec of data) {
+      const out = {};
+      for (const col of COLUMNS) {
+        if (col.key === "InbetriebnahmeDatum") {
+          out[col.title] =
+            rec["Inbetriebnahmedatum der Einheit"] ??
+            rec["InbetriebnahmeDatum"] ??
+            rec["EegInbetriebnahmeDatum"] ??
+            "";
+        } else {
+          out[col.title] = rec[col.key] ?? "";
+        }
+      }
+      rows.push(out);
+    }
+
+    pagesFetched++;
+    page++;
+  }
+
+  return { rows, pagesFetched };
 }
 
 // ---------------------- Handler ----------------------
 module.exports = async (req, res) => {
-  // CORS & Cache
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cache-Control", "no-store");
 
@@ -200,25 +267,24 @@ module.exports = async (req, res) => {
     const url = new URL(req.url, `https://${req.headers.host}`);
     const startISO = url.searchParams.get("start");
     const endISO   = url.searchParams.get("end");
-    const carrierQ = (url.searchParams.get("carrier") || "2495").trim(); // bevorzugt Code
-    const statusQ  = (url.searchParams.get("status") || "").trim().toLowerCase(); // z.B. "35" oder "off"
+    const carrierQ = (url.searchParams.get("carrier") || "2495").trim();
+    const statusQ  = (url.searchParams.get("status") || "").trim().toLowerCase();
     const format   = (url.searchParams.get("format") || "csv").toLowerCase();
-    const debugQ   = (url.searchParams.get("debug") || "").toLowerCase(); // "keys" | "sample" | "fields"
+    const debugQ   = (url.searchParams.get("debug") || "").toLowerCase();
 
-    // ---- NEU: flexiblere Limits ----
     const pageSizeReq = parseInt(url.searchParams.get("pagesize") || "2000", 10);
-    const pageSize = Math.max(1, Math.min(isNaN(pageSizeReq) ? 2000 : pageSizeReq, 5000)); // bis 5000
+    const pageSize = Math.max(1, Math.min(isNaN(pageSizeReq) ? 2000 : pageSizeReq, 5000));
 
     const maxPagesReq = parseInt(url.searchParams.get("maxpages") || "0", 10);
-    const maxPages = Math.max(0, isNaN(maxPagesReq) ? 0 : maxPagesReq); // 0 = unbegrenzt
+    const maxPages = Math.max(0, isNaN(maxPagesReq) ? 0 : maxPagesReq);
 
     if (!startISO || !endISO) {
       res.status(400).send("Missing 'start' or 'end' (YYYY-MM-DD). Example: ?start=2024-01-01&end=2024-02-01&format=csv");
       return;
     }
 
-    const dateClause = buildMastrDateRange(startISO, endISO);
-    if (!dateClause) {
+    // einfache Datumsvalidierung (für saubere 400er)
+    if (!buildMastrDateRange(startISO, endISO)) {
       res.status(400).send("Invalid date format. Use YYYY-MM-DD for 'start' and 'end'.");
       return;
     }
@@ -226,111 +292,67 @@ module.exports = async (req, res) => {
     const ac = new AbortController();
     const carrierCode = await tryResolveCarrierCode(carrierQ, ac.signal);
 
-    // Filter zusammenbauen
-    const parts = [dateClause, `Energieträger~eq~'${carrierCode}'`];
-    if (statusQ && statusQ !== "off") {
-      const statusCode = /^\d+$/.test(statusQ) ? statusQ : "35"; // „In Betrieb“ als Fallback
-      parts.push(`Betriebs-Status~eq~'${statusCode}'`);
-    }
-    const filterRaw = parts.join("~and~");
-    const filterEncoded = encodeURIComponent(filterRaw);
+    // Debug-Modi wie bisher (einfach behalten)
+    if (debugQ === "sample" || debugQ === "keys" || debugQ === "fields") {
+      const { rows } = await fetchRangeRows({
+        startISO,
+        endISO,
+        carrierCode,
+        statusQ,
+        pageSize,
+        maxPages,
+        signal: ac.signal
+      });
 
-    let page = 1;
-    const rows = [];
-    let pagesFetched = 0;
-
-    while (true) {
-      // Sicherheitsdeckel prüfen (nur wenn >0 gesetzt)
-      if (maxPages > 0 && page > maxPages) break;
-
-      const q =
-        `${BASE}?group=&sort=&aggregate=` +
-        `&forExport=true` +
-        `&page=${page}&pageSize=${pageSize}` +
-        `&filter=${filterEncoded}`;
-
-      const j = await fetchJSON(q, ac.signal);
-      if (j && j.Error) {
-        res.status(502).send(`Upstream reported Error (Type=${j.Type || "?"}): ${j.Message || "no message"}`);
+      const items = rows;
+      if (debugQ === "sample") {
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.status(200).send(JSON.stringify(items[0] || {}, null, 2));
         return;
       }
 
-      // --- DEBUG: früh rausgeben, bevor wir normal parsen ---
-      if (debugQ === "sample" || debugQ === "keys" || debugQ === "fields") {
-        const items =
-          Array.isArray(j?.Items) ? j.Items :
-          Array.isArray(j?.Data)  ? j.Data  :
-          Array.isArray(j)        ? j       : [];
-
-        if (debugQ === "sample") {
-          res.setHeader("Content-Type", "application/json; charset=utf-8");
-          res.status(200).send(JSON.stringify(items[0] || {}, null, 2));
-          return;
-        }
-
-        if (debugQ === "keys") {
-          const sample = items.slice(0, 200);
-          const counts = {};
-          for (const rec of sample) {
-            for (const k of Object.keys(rec || {})) {
-              if (!counts[k]) counts[k] = 0;
-              if (rec[k] !== null && rec[k] !== "") counts[k]++;
-            }
-          }
-          const keys = Object.entries(counts)
-            .sort((a,b) => b[1]-a[1])
-            .map(([key,count]) => ({ key, nonNullInSample: count }));
-          res.setHeader("Content-Type", "application/json; charset=utf-8");
-          res.status(200).send(JSON.stringify({ keys, sampleSize: sample.length }, null, 2));
-          return;
-        }
-
-        if (debugQ === "fields") {
-          const sample = items[0] || {};
-          const report = COLUMNS.map(c => ({
-            title: c.title,
-            key: c.key,
-            presentInSample: Object.prototype.hasOwnProperty.call(sample, c.key),
-            sampleValue: sample[c.key] ?? null
-          }));
-          res.setHeader("Content-Type", "application/json; charset=utf-8");
-          res.status(200).send(JSON.stringify({ report, hint: "Passe 'key' an, falls presentInSample=false. Für neue Keys: erst &debug=keys nutzen." }, null, 2));
-          return;
-        }
-      }
-      // --- Ende Debug-Zweig ---
-
-      // Normale Verarbeitung
-      const data =
-        Array.isArray(j?.Items) ? j.Items :
-        Array.isArray(j?.Data)  ? j.Data  :
-        Array.isArray(j)        ? j       : [];
-
-      // --- NEU: „bis leer“ ---
-      if (!data.length) break;
-
-      for (const rec of data) {
-        const out = {};
-        for (const col of COLUMNS) {
-          if (col.key === "InbetriebnahmeDatum") {
-            // robustes Datum (manche Endpunkte liefern Variante)
-            out[col.title] =
-              rec["Inbetriebnahmedatum der Einheit"] ??
-              rec["InbetriebnahmeDatum"] ??
-              rec["EegInbetriebnahmeDatum"] ??
-              "";
-          } else {
-            out[col.title] = rec[col.key] ?? "";
+      if (debugQ === "keys") {
+        const sample = items.slice(0, 200);
+        const counts = {};
+        for (const rec of sample) {
+          for (const k of Object.keys(rec || {})) {
+            if (!counts[k]) counts[k] = 0;
+            if (rec[k] !== null && rec[k] !== "") counts[k]++;
           }
         }
-        rows.push(out);
+        const keys = Object.entries(counts)
+          .sort((a, b) => b[1] - a[1])
+          .map(([key, count]) => ({ key, nonNullInSample: count }));
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.status(200).send(JSON.stringify({ keys, sampleSize: sample.length }, null, 2));
+        return;
       }
 
-      pagesFetched++;
-      page++;
+      if (debugQ === "fields") {
+        const sample = items[0] || {};
+        const report = COLUMNS.map(c => ({
+          title: c.title,
+          key: c.key,
+          presentInSample: Object.prototype.hasOwnProperty.call(sample, c.title),
+          sampleValue: sample[c.title] ?? null
+        }));
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.status(200).send(JSON.stringify({ report }, null, 2));
+        return;
+      }
     }
 
-    // Ausgabe
+    // normaler Weg über Helfer
+    const { rows, pagesFetched } = await fetchRangeRows({
+      startISO,
+      endISO,
+      carrierCode,
+      statusQ,
+      pageSize,
+      maxPages,
+      signal: ac.signal
+    });
+
     res.setHeader("X-Pages-Fetched", String(pagesFetched));
     res.setHeader("X-Rows", String(rows.length));
 
