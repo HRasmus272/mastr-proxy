@@ -2,6 +2,7 @@
 // MaStR-Proxy mit SERVERSEITIGEM Datumsfilter (Inbetriebnahmedatum der Einheit, gt/lt, dd.MM.yyyy)
 // Features: Pagination, optionaler Status-Filter, CSV/JSON-Ausgabe, Timeout & Retries
 // + Debug-Modi: &debug=keys | &debug=sample | &debug=fields
+// + SERVERSEITIGE PARALLELISIERUNG über Datumsintervalle (&chunkdays, &maxconcurrent)
 
 // ---------------------- Konfiguration ----------------------
 const BASE =
@@ -187,7 +188,66 @@ async function tryResolveCarrierCode(carrierQ, signal) {
   return "2495"; // Solare Strahlungsenergie
 }
 
-// ---------- NEU: Helfer für einen Zeitbereich (wird später parallelisiert) ----------
+// ---------- NEU: Datumsbereich in kleinere Intervalle splitten ----------
+function splitRangeIntoChunks(startISO, endISO, daysPerChunk) {
+  const chunks = [];
+  const start = parseISODate(startISO);
+  const end = parseISODate(endISO);
+  if (!start || !end || !(daysPerChunk > 0)) return [{ startISO, endISO }];
+
+  let currentStart = new Date(start.getTime());
+  const finalEnd = new Date(end.getTime());
+
+  while (currentStart < finalEnd) {
+    const currentEnd = new Date(currentStart.getTime());
+    currentEnd.setUTCDate(currentEnd.getUTCDate() + daysPerChunk);
+    if (currentEnd > finalEnd) currentEnd.setTime(finalEnd.getTime());
+
+    chunks.push({
+      startISO: currentStart.toISOString().slice(0, 10), // YYYY-MM-DD
+      endISO: currentEnd.toISOString().slice(0, 10),
+    });
+
+    currentStart = new Date(currentEnd.getTime());
+  }
+
+  return chunks;
+}
+
+// ---------- NEU: Concurrency-Limiter ----------
+async function runWithConcurrencyLimit(tasks, maxConcurrent) {
+  const results = [];
+  let currentIndex = 0;
+  let active = 0;
+
+  return new Promise((resolve, reject) => {
+    const runNext = () => {
+      if (currentIndex >= tasks.length && active === 0) {
+        return resolve(results);
+      }
+
+      while (active < maxConcurrent && currentIndex < tasks.length) {
+        const taskIndex = currentIndex++;
+        const task = tasks[taskIndex];
+        active++;
+
+        task()
+          .then((result) => {
+            results[taskIndex] = result;
+          })
+          .catch(reject)
+          .finally(() => {
+            active--;
+            runNext();
+          });
+      }
+    };
+
+    runNext();
+  });
+}
+
+// ---------- Bestehender Helfer für EINEN Zeitbereich (unverändert) ----------
 async function fetchRangeRows({
   startISO,
   endISO,
@@ -258,6 +318,65 @@ async function fetchRangeRows({
   return { rows, pagesFetched };
 }
 
+// ---------- NEU: Gesamten Zeitraum (ggf. parallel) holen ----------
+async function fetchAllRows({
+  startISO,
+  endISO,
+  carrierCode,
+  statusQ,
+  pageSize,
+  maxPages,
+  signal,
+  chunkDays,
+  maxConcurrent
+}) {
+  const chunkDaysNum = Number(chunkDays) || 0;
+
+  // Falls chunkDays <= 0 → keine Parallelisierung, alter Weg
+  if (chunkDaysNum <= 0) {
+    return await fetchRangeRows({
+      startISO,
+      endISO,
+      carrierCode,
+      statusQ,
+      pageSize,
+      maxPages,
+      signal
+    });
+  }
+
+  const chunks = splitRangeIntoChunks(startISO, endISO, chunkDaysNum);
+
+  const limit = maxConcurrent && maxConcurrent > 0 ? maxConcurrent : 4;
+
+  const tasks = chunks.map((chunk) => {
+    return () =>
+      fetchRangeRows({
+        startISO: chunk.startISO,
+        endISO: chunk.endISO,
+        carrierCode,
+        statusQ,
+        pageSize,
+        maxPages,
+        signal
+      });
+  });
+
+  const results = await runWithConcurrencyLimit(tasks, limit);
+
+  const allRows = [];
+  let totalPagesFetched = 0;
+
+  for (const r of results) {
+    if (!r) continue;
+    if (Array.isArray(r.rows)) allRows.push(...r.rows);
+    if (typeof r.pagesFetched === "number") totalPagesFetched += r.pagesFetched;
+  }
+
+  // Reihenfolge: Chunks in zeitlicher Reihenfolge, innerhalb des Chunks wie im Original
+  return { rows: allRows, pagesFetched: totalPagesFetched };
+}
+
 // ---------------------- Handler ----------------------
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -278,6 +397,15 @@ module.exports = async (req, res) => {
     const maxPagesReq = parseInt(url.searchParams.get("maxpages") || "0", 10);
     const maxPages = Math.max(0, isNaN(maxPagesReq) ? 0 : maxPagesReq);
 
+    // NEU: Parallelisierungs-Parameter
+    const chunkDaysReq = parseInt(url.searchParams.get("chunkdays") || "", 10);
+    // Default: 3 Tage pro Chunk, 0 = Parallelisierung aus
+    const chunkDays = isNaN(chunkDaysReq) ? 3 : Math.max(0, chunkDaysReq);
+
+    const maxConcurrentReq = parseInt(url.searchParams.get("maxconcurrent") || "", 10);
+    // Default: max. 4 parallele Zeitintervalle, min. 1
+    const maxConcurrent = isNaN(maxConcurrentReq) ? 4 : Math.max(1, maxConcurrentReq);
+
     if (!startISO || !endISO) {
       res.status(400).send("Missing 'start' or 'end' (YYYY-MM-DD). Example: ?start=2024-01-01&end=2024-02-01&format=csv");
       return;
@@ -292,16 +420,18 @@ module.exports = async (req, res) => {
     const ac = new AbortController();
     const carrierCode = await tryResolveCarrierCode(carrierQ, ac.signal);
 
-    // Debug-Modi wie bisher (einfach behalten)
+    // Debug-Modi wie bisher, aber über fetchAllRows (inkl. Parallelisierung)
     if (debugQ === "sample" || debugQ === "keys" || debugQ === "fields") {
-      const { rows } = await fetchRangeRows({
+      const { rows } = await fetchAllRows({
         startISO,
         endISO,
         carrierCode,
         statusQ,
         pageSize,
         maxPages,
-        signal: ac.signal
+        signal: ac.signal,
+        chunkDays,
+        maxConcurrent
       });
 
       const items = rows;
@@ -342,19 +472,23 @@ module.exports = async (req, res) => {
       }
     }
 
-    // normaler Weg über Helfer
-    const { rows, pagesFetched } = await fetchRangeRows({
+    // normaler Weg über neuen Helfer (ggf. parallel)
+    const { rows, pagesFetched } = await fetchAllRows({
       startISO,
       endISO,
       carrierCode,
       statusQ,
       pageSize,
       maxPages,
-      signal: ac.signal
+      signal: ac.signal,
+      chunkDays,
+      maxConcurrent
     });
 
     res.setHeader("X-Pages-Fetched", String(pagesFetched));
     res.setHeader("X-Rows", String(rows.length));
+    res.setHeader("X-Chunk-Days", String(chunkDays));
+    res.setHeader("X-Max-Concurrent-Intervals", String(maxConcurrent));
 
     if (format === "json") {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
