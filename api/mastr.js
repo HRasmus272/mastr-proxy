@@ -10,9 +10,14 @@ const BASE =
 const FILTER_META =
   "https://www.marktstammdatenregister.de/MaStR/Einheit/EinheitJson/GetFilterColumnsErweiterteOeffentlicheEinheitStromerzeugung";
 
-const PER_REQUEST_TIMEOUT_MS = parseInt(process.env.MASTR_TIMEOUT_MS || "20000", 10); // 20s
-const RETRIES = parseInt(process.env.MASTR_RETRIES || "2", 10);
-const BACKOFF_BASE_MS = 600; // 600ms, 1200ms
+// 1) Einzel-Request-Timeout: runter auf 12s
+const PER_REQUEST_TIMEOUT_MS = parseInt(process.env.MASTR_TIMEOUT_MS || "12000", 10); // 12s
+
+// 2) Retries: nur noch 1 Wiederholung
+const RETRIES = parseInt(process.env.MASTR_RETRIES || "1", 10);
+
+// 3) Backoff-Basis: etwas kürzer
+const BACKOFF_BASE_MS = 300; // 300ms, 600ms
 
 // ---------------------- Spaltenmapping ----------------------
 const COLUMNS = [
