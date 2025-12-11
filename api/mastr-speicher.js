@@ -175,12 +175,16 @@ async function fetchJSON(url, signal) {
 
 // Energieträger-Code auflösen
 async function tryResolveCarrierCode(carrierQ, signal) {
+  // falls direkt Zahl übergeben wurde (MaStR-Code)
+  if (!carrierQ) return "";
   if (/^\d+$/.test(carrierQ)) return String(carrierQ);
+
   try {
     const meta = await fetchJSON(FILTER_META, signal);
     const carrierFilter = Array.isArray(meta)
       ? meta.find(f => (f.FilterName || "").toLowerCase() === "energieträger")
       : null;
+
     if (carrierFilter && Array.isArray(carrierFilter.ListObject)) {
       const cq = (carrierQ || "").toLowerCase();
       const exact  = carrierFilter.ListObject.find(x => (x.Name || "").toLowerCase() === cq);
@@ -189,8 +193,12 @@ async function tryResolveCarrierCode(carrierQ, signal) {
       const chosen = exact || starts || incl || null;
       if (chosen) return String(chosen.Value);
     }
-  } catch {/* ignore */}
-  return "2495"; // Solare Strahlungsenergie
+  } catch {
+    // ignorieren, dann kein Filter setzen
+  }
+
+  // Fallback: kein Energieträger-Filter, statt hart auf Solar zu gehen
+  return "";
 }
 
 // ---------- NEU: Datumsbereich in kleinere Intervalle splitten ----------
@@ -267,10 +275,15 @@ async function fetchRangeRows({
     throw new Error("Invalid date format. Use YYYY-MM-DD for 'start' and 'end'.");
   }
 
-  const parts = [dateClause, `Energieträger~eq~'${carrierCode}'`];
+  const parts = [dateClause];
+
+  if (carrierCode) {
+  parts.push(`Energieträger~eq~'${carrierCode}'`);
+  }
+
   if (statusQ && statusQ !== "off") {
-    const statusCode = /^\d+$/.test(statusQ) ? statusQ : "35";
-    parts.push(`Betriebs-Status~eq~'${statusCode}'`);
+  const statusCode = /^\d+$/.test(statusQ) ? statusQ : "35";
+  parts.push(`Betriebs-Status~eq~'${statusCode}'`);
   }
   const filterRaw = parts.join("~and~");
   const filterEncoded = encodeURIComponent(filterRaw);
@@ -391,7 +404,7 @@ module.exports = async (req, res) => {
     const url = new URL(req.url, `https://${req.headers.host}`);
     const startISO = url.searchParams.get("start");
     const endISO   = url.searchParams.get("end");
-    const carrierQ = (url.searchParams.get("carrier") || "2495").trim();
+    const carrierQ = (url.searchParams.get("carrier") || "").trim();
     const statusQ  = (url.searchParams.get("status") || "").trim().toLowerCase();
     const format   = (url.searchParams.get("format") || "csv").toLowerCase();
     const debugQ   = (url.searchParams.get("debug") || "").toLowerCase();
